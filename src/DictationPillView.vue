@@ -9,7 +9,6 @@
 //   { kind: "stop" }   → encode WAV + submit → pillFinished
 //   { kind: "cancel" } → drop buffer + pillFinished
 
-import { KbdKey } from "@kosmos/visuals";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   buildDictationVoiceModelValue,
@@ -959,9 +958,9 @@ const exposeStatusText = computed(() => statusText());
                 >
                   Отправить
                   <span class="pill-footer__hotkey" aria-hidden="true">
-                    <KbdKey v-for="part in dictationHotkeyParts" :key="part">{{
+                    <kbd v-for="part in dictationHotkeyParts" :key="part">{{
                       hotkeyPartLabel(part)
-                    }}</KbdKey>
+                    }}</kbd>
                   </span>
                 </button>
               </div>
@@ -1016,9 +1015,9 @@ const exposeStatusText = computed(() => statusText());
           >
             Отправить
             <span class="pill-footer__hotkey" aria-hidden="true">
-              <KbdKey v-for="part in dictationHotkeyParts" :key="part">{{
+              <kbd v-for="part in dictationHotkeyParts" :key="part">{{
                 hotkeyPartLabel(part)
-              }}</KbdKey>
+              }}</kbd>
             </span>
           </button>
         </div>
@@ -1261,5 +1260,15 @@ const exposeStatusText = computed(() => statusText());
   display: inline-flex;
   align-items: center;
   gap: 2px;
+}
+
+.pill-footer__hotkey kbd {
+  min-width: 15px;
+  padding: 1px 4px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 20%, transparent);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 10px;
+  line-height: 14px;
 }
 </style>
