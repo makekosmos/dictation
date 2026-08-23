@@ -1,5 +1,6 @@
 {
   "id": "dictation",
+  "appId": "com.kosmos.dictation",
   "name": "Dictation",
   "version": "0.1.0",
   "description": "Голосовой ввод с hotkey, локальными и облачными моделями",
