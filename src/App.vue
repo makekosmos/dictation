@@ -22,7 +22,6 @@ const config = ref<Config>({ ...fallback });
 const loading = ref(true);
 const saving = ref(false);
 const message = ref("");
-const apiKey = ref("");
 const hasApiKey = ref(false);
 
 const providerLabel = computed(() => (config.value.provider === "local" ? "Локальная" : "Groq"));
@@ -55,20 +54,6 @@ async function save() {
   } finally {
     saving.value = false;
   }
-}
-
-async function saveApiKey() {
-  if (!apiKey.value.trim()) return;
-  await request("dictation.set_api_key", { key: apiKey.value.trim() });
-  apiKey.value = "";
-  hasApiKey.value = true;
-  message.value = "Ключ сохранён";
-}
-
-async function clearApiKey() {
-  await request("dictation.clear_api_key");
-  hasApiKey.value = false;
-  message.value = "Ключ удалён";
 }
 
 onMounted(load);
@@ -104,9 +89,8 @@ onMounted(load);
 
       <section class="dictation-card">
         <h2>Ключ Groq</h2>
-        <p>{{ hasApiKey ? "Ключ сохранён в Windows Credential Manager." : "Ключ пока не задан." }}</p>
-        <div class="key-row"><input v-model="apiKey" type="password" placeholder="gsk_…" /><button type="button" @click="saveApiKey">Сохранить ключ</button></div>
-        <button v-if="hasApiKey" class="quiet" type="button" @click="clearApiKey">Удалить ключ</button>
+        <p>{{ hasApiKey ? "Ключ сохранён в Kosmos Manager." : "Ключ пока не задан." }}</p>
+        <p>Добавьте или замените его в Kosmos Manager → Secrets. Dictation не получает значение ключа.</p>
       </section>
 
       <section class="dictation-card dictation-muted">
