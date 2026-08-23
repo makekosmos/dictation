@@ -14,9 +14,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      - name: Checkout Kosmos host contract
+        uses: actions/checkout@v4
+        with:
+          repository: makekosmos/kosmos
+          path: kosmos
+          fetch-depth: 1
+          token: ${{ secrets.KOSMOS_READ_TOKEN }}
       - run: bun install --frozen-lockfile
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.KOSMOS_READ_TOKEN }}
       - run: bun run validate
       - run: bun run build
       - run: bun run package:kext
