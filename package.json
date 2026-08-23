@@ -1,0 +1,23 @@
+{
+  "name": "@kosmos/extension-dictation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dictation — Marketplace extension for Kosmos Desktop.",
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "scripts": {
+    "build": "vite build",
+    "validate": "node scripts/validate-manifest.mjs",
+    "package:kext": "bun run validate && bun run build && node scripts/package-kext.mjs",
+    "test": "bun run validate"
+  },
+  "dependencies": {
+    "@kosmos/visuals": "npm:@makekosmos/visuals@0.1.2",
+    "vue": "^3.6.0-beta.12"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.7",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.3"
+  }
+}
