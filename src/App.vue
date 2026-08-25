@@ -4,7 +4,7 @@ import { computed, onMounted, ref } from "vue";
 type Config = {
   hotkey: string;
   language: string;
-  injectMode: "paste" | "type";
+  injectMode: "auto_paste" | "clipboard_only";
   provider: "groq" | "local";
   model: string;
   providerEnabled: boolean;
@@ -13,7 +13,7 @@ type Config = {
 const fallback: Config = {
   hotkey: "Ctrl+Shift+;",
   language: "ru",
-  injectMode: "paste",
+  injectMode: "auto_paste",
   provider: "groq",
   model: "whisper-large-v3-turbo",
   providerEnabled: true,
@@ -25,9 +25,13 @@ const message = ref("");
 const hasApiKey = ref(false);
 
 const providerLabel = computed(() => (config.value.provider === "local" ? "Локальная" : "Groq"));
-const request = <T,>(operation: string, params: Record<string, unknown> = {}) => {
-  if (!window.kepler) return Promise.reject(new Error("Откройте Dictation из Kosmos Desktop"));
-  return window.kepler.ark.request<T>(operation, params);
+type EngineResult<T> = { ok: true; data: T } | { ok: false; message: string };
+
+const request = async <T,>(operation: string, params: Record<string, unknown> = {}): Promise<T> => {
+  if (!window.kosmosApp?.ark) throw new Error("Откройте Dictation из Kosmos");
+  const result = await window.kosmosApp.ark.request<EngineResult<T>>(operation, params);
+  if (!result.ok) throw new Error(result.message);
+  return result.data;
 };
 
 async function load() {
@@ -56,6 +60,16 @@ async function save() {
   }
 }
 
+async function toggleRecording() {
+  try {
+    const state = await request<{ state?: string }>("dictation.get_state");
+    await request(state.state === "recording" ? "dictation.cancel" : "dictation.start_recording");
+    message.value = state.state === "recording" ? "Диктовка остановлена" : "Диктовка запущена";
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : "Не удалось изменить состояние диктовки";
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -67,7 +81,7 @@ onMounted(load);
         <h1>Dictation</h1>
         <p>Голосовой ввод без доступа к вашим данным ARK.</p>
       </div>
-      <button class="primary" type="button" @click="window.kepler?.dictation.toggle()">Начать диктовку</button>
+      <button class="primary" type="button" @click="toggleRecording">Начать диктовку</button>
     </header>
 
     <p v-if="message" class="dictation-message">{{ message }}</p>
@@ -78,7 +92,7 @@ onMounted(load);
         <label>Горячая клавиша <input v-model="config.hotkey" placeholder="Ctrl+Shift+;" /></label>
         <label>Язык <input v-model="config.language" placeholder="ru" /></label>
         <label>Вставка
-          <select v-model="config.injectMode"><option value="paste">Через буфер обмена</option><option value="type">Печатать текст</option></select>
+          <select v-model="config.injectMode"><option value="auto_paste">Вставлять автоматически</option><option value="clipboard_only">Только скопировать</option></select>
         </label>
         <label>Провайдер
           <select v-model="config.provider"><option value="groq">Groq</option><option value="local">Локальная модель</option></select>

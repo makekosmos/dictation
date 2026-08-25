@@ -8,14 +8,8 @@ declare module "*.vue" {
 
 declare global {
   interface Window {
-    kepler?: {
+    kosmosApp?: {
       ark: { request<T = unknown>(operation: string, params?: Record<string, unknown>): Promise<T> };
-      dictation: {
-        toggle(): Promise<void>;
-        cancel(): Promise<void>;
-        pillFinished(): Promise<void>;
-        onCommand(cb: (command: { kind: "start" | "stop" | "cancel" }) => void): () => void;
-      };
     };
   }
 }

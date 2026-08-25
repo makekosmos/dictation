@@ -8,7 +8,8 @@
   "scripts": {
     "build": "vite build",
     "validate": "node scripts/validate-manifest.mjs",
-    "package:kext": "bun run validate && bun run build && node scripts/package-kext.mjs",
+    "package:kspkg": "bun run validate && bun run build && node scripts/package-kext.mjs",
+    "package:kext": "bun run package:kspkg",
     "test": "bun run validate"
   },
   "dependencies": {
