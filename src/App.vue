@@ -1,4 +1,12 @@
 <script setup lang="ts">
+import {
+  Button,
+  SettingsButtonRow,
+  SettingsDropdownRow,
+  SettingsList,
+  SettingsTextInputRow,
+  Skeleton,
+} from "@kosmos/visuals";
 import { computed, onMounted, ref } from "vue";
 
 type Config = {
@@ -9,6 +17,8 @@ type Config = {
   model: string;
   providerEnabled: boolean;
 };
+
+type EngineResult<T> = { ok: true; data: T } | { ok: false; message: string };
 
 const fallback: Config = {
   hotkey: "Ctrl+Shift+;",
@@ -25,7 +35,14 @@ const message = ref("");
 const hasApiKey = ref(false);
 
 const providerLabel = computed(() => (config.value.provider === "local" ? "Локальная" : "Groq"));
-type EngineResult<T> = { ok: true; data: T } | { ok: false; message: string };
+const injectOptions = [
+  { value: "auto_paste", label: "Вставлять автоматически" },
+  { value: "clipboard_only", label: "Только копировать" },
+] as const;
+const providerOptions = [
+  { value: "groq", label: "Groq" },
+  { value: "local", label: "Локальная модель" },
+] as const;
 
 const request = async <T,>(operation: string, params: Record<string, unknown> = {}): Promise<T> => {
   if (!window.kosmosApp?.ark) throw new Error("Откройте Dictation из Kosmos");
@@ -52,7 +69,7 @@ async function save() {
   message.value = "";
   try {
     await request("dictation.update_config", config.value as unknown as Record<string, unknown>);
-    message.value = "Сохранено";
+    message.value = "Настройки сохранены";
   } catch (error) {
     message.value = error instanceof Error ? error.message : "Не удалось сохранить";
   } finally {
@@ -74,43 +91,74 @@ onMounted(load);
 </script>
 
 <template>
-  <main class="app">
-    <header class="header">
+  <main class="dictation-settings">
+    <header class="dictation-header">
       <div>
-        <p class="eyebrow">Kosmos</p>
-        <h1>Dictation</h1>
-        <p>Голосовой ввод без доступа к вашим данным ARK.</p>
+        <h1>Настройки Dictation</h1>
+        <p>Горячая клавиша, распознавание и вставка текста.</p>
       </div>
-      <button class="primary" type="button" @click="toggleRecording">Начать диктовку</button>
+      <Button variant="surface" size="sm" @click="toggleRecording">Начать диктовку</Button>
     </header>
 
-    <p v-if="message" class="dictation-message">{{ message }}</p>
-    <section v-if="loading" class="dictation-card">Загрузка…</section>
+    <p v-if="message" class="dictation-message" role="status">{{ message }}</p>
+    <div v-if="loading" class="dictation-loading">
+      <Skeleton class="h-56 w-full" />
+      <Skeleton class="h-28 w-full" />
+    </div>
     <template v-else>
-      <section class="dictation-card">
-        <h2>Основное</h2>
-        <label>Горячая клавиша <input v-model="config.hotkey" placeholder="Ctrl+Shift+;" /></label>
-        <label>Язык <input v-model="config.language" placeholder="ru" /></label>
-        <label>Вставка
-          <select v-model="config.injectMode"><option value="auto_paste">Вставлять автоматически</option><option value="clipboard_only">Только скопировать</option></select>
-        </label>
-        <label>Провайдер
-          <select v-model="config.provider"><option value="groq">Groq</option><option value="local">Локальная модель</option></select>
-        </label>
-        <label>Модель <input v-model="config.model" /></label>
-        <button class="primary" type="button" :disabled="saving" @click="save">{{ saving ? "Сохранение…" : "Сохранить" }}</button>
-      </section>
+      <SettingsList>
+        <SettingsTextInputRow
+          v-model="config.hotkey"
+          title="Горячая клавиша"
+          description="Работает глобально, пока запущен Kosmos Desktop."
+          placeholder="Ctrl+Shift+;"
+        />
+        <SettingsTextInputRow
+          v-model="config.language"
+          title="Язык"
+          description="Код языка распознавания."
+          placeholder="ru"
+        />
+        <SettingsDropdownRow
+          v-model="config.injectMode"
+          title="После распознавания"
+          :options="injectOptions"
+          :searchable="false"
+        />
+        <SettingsDropdownRow
+          v-model="config.provider"
+          title="Провайдер"
+          :options="providerOptions"
+          :searchable="false"
+        />
+        <SettingsTextInputRow v-model="config.model" title="Модель" />
+        <SettingsButtonRow
+          title="Сохранить настройки"
+          description="Новая горячая клавиша применяется сразу."
+          button-label="Сохранить"
+          variant="surface"
+          :loading="saving"
+          @click="save"
+        />
+      </SettingsList>
 
-      <section class="dictation-card">
-        <h2>Ключ Groq</h2>
-        <p>{{ hasApiKey ? "Ключ сохранён в Kosmos Manager." : "Ключ пока не задан." }}</p>
-        <p>Добавьте или замените его в Kosmos Manager → Secrets. Dictation не получает значение ключа.</p>
-      </section>
-
-      <section class="dictation-card dictation-muted">
-        <h2>{{ providerLabel }}</h2>
-        <p>Микрофон, глобальная клавиша, overlay и вставка текста выполняются Kosmos Desktop. Этот продукт не запрашивает доступ к объектам, синхронизации или данным ARK.</p>
-      </section>
+      <SettingsList>
+        <SettingsButtonRow
+          title="Ключ Groq"
+          :description="hasApiKey ? 'Ключ сохранён в защищённом хранилище Kosmos.' : 'Добавьте ключ на странице «Ключи» в Kosmos Manager.'"
+          button-label="В Kosmos Manager"
+          variant="surface"
+          disabled
+        />
+        <SettingsButtonRow
+          :title="providerLabel"
+          description="Микрофон, горячая клавиша и вставка текста выполняются Kosmos Desktop."
+          button-label="Активно"
+          variant="surface"
+          disabled
+          muted
+        />
+      </SettingsList>
     </template>
   </main>
 </template>

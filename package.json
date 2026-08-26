@@ -1,6 +1,6 @@
 {
   "name": "@kosmos/extension-dictation",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Dictation — Marketplace extension for Kosmos Desktop.",
   "type": "module",
@@ -13,6 +13,8 @@
     "test": "bun run validate"
   },
   "dependencies": {
+    "@tailwindcss/vite": "^4.2.2",
+    "tailwindcss": "^4.1.16",
     "vue": "^3.6.0-beta.12"
   },
   "devDependencies": {

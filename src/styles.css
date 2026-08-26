@@ -1,16 +1,76 @@
-:root { color: #f4f4f5; background: #19191b; font-family: Inter, system-ui, sans-serif; }
-* { box-sizing: border-box; }
-html, body, #app { min-height: 100%; background: #19191b; }
-body { margin: 0; background: #19191b; }
-button, input, select { font: inherit; }
-.app { min-height: 100vh; max-width: 820px; margin: 0 auto; padding: 48px 40px 72px; background: #19191b; }
-.header { display: flex; gap: 24px; justify-content: space-between; align-items: center; margin-bottom: 30px; }
-h1, h2, p { margin-top: 0; } h1 { margin-bottom: 6px; font-size: 34px; } h2 { font-size: 17px; }
-.eyebrow { color: #65c9f3; font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.header p, .dictation-card p { color: #aaaab0; }
-.dictation-card { display: grid; gap: 14px; margin: 16px 0; padding: 22px; border: 1px solid #333338; border-radius: 16px; color: #f4f4f5; background: #202023; }
-.dictation-card label { display: grid; gap: 7px; color: #d7d7db; font-size: 14px; }
-input, select { width: 100%; padding: 10px 12px; border: 1px solid #44444b; border-radius: 9px; color: inherit; background: #141416; }
-button { cursor: pointer; padding: 10px 14px; border: 0; border-radius: 9px; color: #e8e8eb; background: #36363d; }
-button:disabled { opacity: .6; cursor: default; }.primary { background: #2167d9; }.quiet { justify-self: start; background: transparent; color: #ff9d9d; padding-left: 0; }
-.dictation-message { padding: 10px 12px; border-radius: 9px; color: #9be7bd; background: #183426; }.dictation-muted { background: #1c2227; }
+@import "tailwindcss";
+@source "../../imago/**/*.{vue,ts}";
+@import "@kosmos/visuals/theme/css";
+
+@custom-variant dark (&:is(.dark *));
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.dictation-settings {
+  display: flex;
+  width: min(100%, 960px);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 24px;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dictation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.dictation-header h1,
+.dictation-header p {
+  margin: 0;
+}
+
+.dictation-header h1 {
+  font-size: 1.5rem;
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.dictation-header p,
+.dictation-message {
+  color: var(--muted-foreground);
+  font-size: var(--kosmos-text-caption-size);
+}
+
+.dictation-header p {
+  margin-top: 4px;
+}
+
+.dictation-message {
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: var(--radius-lg);
+  background: var(--card);
+}
+
+.dictation-loading {
+  display: grid;
+  gap: 16px;
+}
