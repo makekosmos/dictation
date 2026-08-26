@@ -2,7 +2,7 @@
   "schema_version": 2,
   "id": "com.kosmos.dictation",
   "name": "Dictation",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "kind": "app",
   "engine_api": ">=1.0.0",
   "entrypoint": "dist/index.html",

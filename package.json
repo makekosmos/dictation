@@ -1,6 +1,6 @@
 {
   "name": "@kosmos/extension-dictation",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Dictation — Marketplace extension for Kosmos Desktop.",
   "type": "module",

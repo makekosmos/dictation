@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 
 const stage = path.resolve(".tmp/package/dictation");
+const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 for (const file of ["manifest.json", "icon.png"]) {
@@ -10,7 +11,7 @@ for (const file of ["manifest.json", "icon.png"]) {
 }
 execFileSync("powershell", ["-NoProfile", "-Command", `Copy-Item -LiteralPath 'dist' -Destination '${stage}' -Recurse`]);
 mkdirSync("release", { recursive: true });
-const output = "release/dictation-0.2.0.kspkg";
+const output = `release/dictation-${manifest.version}.kspkg`;
 rmSync(output, { force: true });
 const zip = `${output}.zip`;
 rmSync(zip, { force: true });
