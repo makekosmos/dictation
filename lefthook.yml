@@ -1,0 +1,19 @@
+glob_matcher: doublestar
+
+pre-commit:
+  parallel: false
+  commands:
+    lint:
+      glob: "*.{ts,vue,mjs,js,json}"
+      run: bunx oxlint {staged_files}
+    format:
+      glob: "*.{ts,vue,mjs,js,json}"
+      run: bunx oxfmt --check {staged_files}
+    manifest:
+      run: bun run check:manifest
+
+pre-push:
+  parallel: false
+  commands:
+    check:
+      run: bun run check

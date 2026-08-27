@@ -1,12 +1,10 @@
 # Dictation
 
-Marketplace extension for Kosmos Desktop. It owns the Dictation UI and requests only `dictation.control`; microphone, global hotkey, overlay lifecycle, credentials and text injection remain in the Desktop host.
+Marketplace app for Kosmos Desktop. It owns the Dictation UI and requests only the five manifest-scoped `dictation.*` operations; microphone, global hotkey, overlay lifecycle, credentials, transcription and text injection remain in the Cortex host.
 
 ```powershell
-$env:NODE_AUTH_TOKEN = gh auth token
-bun install
-bun run build
-bun run package:kext
+bun install --frozen-lockfile
+bun run check
 ```
 
-Install the resulting `.kext` in Kosmos Marketplace or through Settings → Extensions.
+Install the resulting `release/dictation-<version>.kspkg` in Kosmos Marketplace or through Settings → Extensions.

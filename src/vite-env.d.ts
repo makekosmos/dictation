@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+import type { DictationBridge } from "./lib/dictationApi";
+
 declare module "*.vue" {
   import type { DefineComponent } from "vue";
   const component: DefineComponent<Record<string, unknown>, Record<string, unknown>, unknown>;
@@ -9,7 +11,7 @@ declare module "*.vue" {
 declare global {
   interface Window {
     kosmosApp?: {
-      ark: { request<T = unknown>(operation: string, params?: Record<string, unknown>): Promise<T> };
+      ark: DictationBridge;
     };
   }
 }

@@ -10,11 +10,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Checkout shared visuals
+        uses: actions/checkout@v4
+        with:
+          repository: makekosmos/imago
+          path: imago
+          fetch-depth: 1
+          token: ${{ secrets.KOSMOS_READ_TOKEN }}
       - run: bun install --frozen-lockfile
-      - run: bun run validate
-      - run: bun run build
-      - run: bun run package:kext
+      - run: bun run check
       - uses: actions/upload-artifact@v4
         with:
-          name: dictation-kext
-          path: release/*.kext
+          name: dictation-kspkg
+          path: release/dictation-*.kspkg

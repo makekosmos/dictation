@@ -13,7 +13,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@kosmos/visuals/theme/css": path.resolve(makekosmosRoot, "imago/theme/css-variables.css"),
-      "@kosmos/visuals": path.resolve(makekosmosRoot, "imago"),
+      "@kosmos/visuals": path.resolve(makekosmosRoot, "imago/index.ts"),
     },
     dedupe: ["vue"],
   },

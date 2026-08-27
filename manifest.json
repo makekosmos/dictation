@@ -10,7 +10,10 @@
   "publisher": "kosmos",
   "permissions": [
     { "capability": "ark.read", "scopes": ["dictation.get_state", "dictation.get_config"] },
-    { "capability": "ark.write", "scopes": ["dictation.update_config", "dictation.start_recording", "dictation.cancel"] }
+    {
+      "capability": "ark.write",
+      "scopes": ["dictation.update_config", "dictation.start_recording", "dictation.cancel"]
+    }
   ],
   "targets": [{ "runtime": "kosmos-host", "os": ["windows"] }],
   "data": { "access": [], "defines": [], "mappings": [] }
