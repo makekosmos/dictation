@@ -19,12 +19,16 @@ describe("Dictation Cortex contract", () => {
       request: async (operation, requestParams) => {
         calls.push(operation);
         params.push(requestParams ?? {});
-        return operation === "dictation.get_state"
-          ? {
-              ok: true,
-              data: { state: "recording", microphonePermission: "granted", apiKey: "secret" },
-            }
-          : { ok: true, data: { config, hasApiKey: true, apiKey: "secret" } };
+        if (operation === "dictation.get_state") {
+          return {
+            ok: true,
+            data: { state: "recording", microphonePermission: "granted", apiKey: "secret" },
+          };
+        }
+        if (operation === "dictation.list_local_models") {
+          return { ok: true, data: { commandInstalled: true, models: [] } };
+        }
+        return { ok: true, data: { config, hasApiKey: true, apiKey: "secret" } };
       },
     })!;
 
@@ -32,22 +36,25 @@ describe("Dictation Cortex contract", () => {
       "cancel",
       "getConfig",
       "getState",
+      "listLocalModels",
       "startRecording",
       "updateConfig",
     ]);
     await api.getConfig();
     await api.getState();
+    await api.listLocalModels();
     await api.updateConfig({ ...config, apiKey: "secret" } as typeof config);
     await api.startRecording();
     await api.cancel();
     expect(calls).toEqual([
       "dictation.get_config",
       "dictation.get_state",
+      "dictation.list_local_models",
       "dictation.update_config",
       "dictation.start_recording",
       "dictation.cancel",
     ]);
-    expect(params[2]).toEqual(config);
+    expect(params[3]).toEqual(config);
   });
 
   it("returns permission status and config without credential or native fields", async () => {

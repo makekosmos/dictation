@@ -36,6 +36,7 @@ const requested = manifest.permissions.flatMap(({ capability, scopes = [] }) =>
 const expected = [
   "ark.read:dictation.get_state",
   "ark.read:dictation.get_config",
+  "ark.read:dictation.list_local_models",
   "ark.write:dictation.update_config",
   "ark.write:dictation.start_recording",
   "ark.write:dictation.cancel",

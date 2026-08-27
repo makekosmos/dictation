@@ -9,7 +9,10 @@
   "icon": "icon.png",
   "publisher": "kosmos",
   "permissions": [
-    { "capability": "ark.read", "scopes": ["dictation.get_state", "dictation.get_config"] },
+    {
+      "capability": "ark.read",
+      "scopes": ["dictation.get_state", "dictation.get_config", "dictation.list_local_models"]
+    },
     {
       "capability": "ark.write",
       "scopes": ["dictation.update_config", "dictation.start_recording", "dictation.cancel"]

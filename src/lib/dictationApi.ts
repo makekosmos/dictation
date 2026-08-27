@@ -11,6 +11,7 @@ export type DictationConfig = {
 export type DictationOperation =
   | "dictation.get_state"
   | "dictation.get_config"
+  | "dictation.list_local_models"
   | "dictation.update_config"
   | "dictation.start_recording"
   | "dictation.cancel";
@@ -24,8 +25,22 @@ export type DictationState = {
   microphonePermission?: "unknown" | "granted" | "denied" | "prompt";
 };
 
+export type LocalModel = {
+  id: string;
+  name: string;
+  transcriptionSupported: boolean;
+  directory: boolean;
+  downloaded: boolean;
+};
+
+export type LocalModels = {
+  commandInstalled: boolean;
+  models: LocalModel[];
+};
+
 export type DictationApi = {
   getConfig(): Promise<{ config: Partial<DictationConfig>; hasApiKey: boolean }>;
+  listLocalModels(): Promise<LocalModels>;
   getState(): Promise<DictationState>;
   updateConfig(config: DictationConfig): Promise<void>;
   startRecording(): Promise<void>;
@@ -73,6 +88,26 @@ function sanitizeState(value: unknown): DictationState {
   return state;
 }
 
+function sanitizeLocalModels(value: unknown): LocalModels {
+  const input = asObject(value);
+  const models = Array.isArray(input.models)
+    ? input.models.flatMap((item) => {
+        const model = asObject(item);
+        if (typeof model.id !== "string" || typeof model.name !== "string") return [];
+        return [
+          {
+            id: model.id,
+            name: model.name,
+            transcriptionSupported: model.transcriptionSupported === true,
+            directory: model.directory === true,
+            downloaded: model.downloaded === true,
+          },
+        ];
+      })
+    : [];
+  return { commandInstalled: input.commandInstalled === true, models };
+}
+
 async function request<T>(
   bridge: DictationBridge,
   operation: DictationOperation,
@@ -107,6 +142,9 @@ export function createDictationApi(bridge: DictationBridge | undefined): Dictati
     },
     async getState() {
       return sanitizeState(await request(bridge, "dictation.get_state"));
+    },
+    async listLocalModels() {
+      return sanitizeLocalModels(await request(bridge, "dictation.list_local_models"));
     },
     async updateConfig(config) {
       await request(bridge, "dictation.update_config", sanitizeConfig(config));

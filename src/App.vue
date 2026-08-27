@@ -13,7 +13,7 @@ import { Settings2 } from "@lucide/vue";
 import { computed, onMounted, ref } from "vue";
 import groqIconMarkup from "./assets/providers/groq.svg?raw";
 import kosmosIconMarkup from "./assets/providers/kosmos.svg?raw";
-import { createDictationApi, type DictationConfig } from "./lib/dictationApi";
+import { createDictationApi, type DictationConfig, type LocalModels } from "./lib/dictationApi";
 
 type Config = DictationConfig;
 
@@ -31,13 +31,14 @@ const loading = ref(true);
 const saving = ref(false);
 const message = ref("");
 const hasApiKey = ref(false);
+const localModels = ref<LocalModels>({ commandInstalled: false, models: [] });
 
 const providerLabel = computed(() => (config.value.provider === "local" ? "Локальная" : "Groq"));
 const injectOptions = [
   { value: "auto_paste", label: "Вставлять автоматически" },
   { value: "clipboard_only", label: "Только копировать" },
 ] as const;
-const modelOptions = [
+const groqModelOptions = [
   {
     value: "groq:whisper-large-v3-turbo",
     label: "Whisper Large V3 Turbo",
@@ -48,37 +49,23 @@ const modelOptions = [
     label: "Whisper Large V3",
     description: "Онлайн-распознавание через Groq",
   },
-  {
-    value: "local:tiny-q5_1",
-    label: "Whisper Tiny",
-    description: "Быстрая локальная модель",
-  },
-  {
-    value: "local:small",
-    label: "Whisper Small",
-    description: "Локальная модель для повседневной диктовки",
-  },
-  {
-    value: "local:medium",
-    label: "Whisper Medium",
-    description: "Более высокое качество, но тяжелее для CPU",
-  },
-  {
-    value: "local:turbo",
-    label: "Whisper Large V3 Turbo",
-    description: "Локальный баланс качества и скорости",
-  },
-  {
-    value: "local:large",
-    label: "Whisper Large V3 q5",
-    description: "Максимальное качество из локального списка",
-  },
-  {
-    value: "local:parakeet-tdt-0.6b-v3",
-    label: "Parakeet V3",
-    description: "Быстрая локальная модель NVIDIA",
-  },
 ] as const;
+
+const modelOptions = computed(() => [
+  ...groqModelOptions,
+  ...localModels.value.models
+    .filter(
+      (model) =>
+        model.downloaded &&
+        model.transcriptionSupported &&
+        (localModels.value.commandInstalled || model.directory),
+    )
+    .map((model) => ({
+      value: `local:${model.id}`,
+      label: model.name,
+      description: "Локальное распознавание речи",
+    })),
+]);
 
 const selectedModel = computed(
   () =>
@@ -110,6 +97,7 @@ async function load() {
     const result = await requireDictation().getConfig();
     config.value = { ...fallback, ...result.config };
     hasApiKey.value = result.hasApiKey === true;
+    localModels.value = await requireDictation().listLocalModels();
   } catch (error) {
     message.value = error instanceof Error ? error.message : "Не удалось загрузить настройки";
   } finally {

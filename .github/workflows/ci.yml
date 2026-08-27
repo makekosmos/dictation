@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: makekosmos/imago
-          path: imago
+          path: ../imago
           fetch-depth: 1
           token: ${{ secrets.KOSMOS_READ_TOKEN }}
       - run: bun install --frozen-lockfile
