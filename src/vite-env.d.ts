@@ -13,6 +13,9 @@ declare global {
     kosmosApp?: {
       ark: DictationBridge;
     };
+    kepler?: {
+      ark: DictationBridge;
+    };
   }
 }
 

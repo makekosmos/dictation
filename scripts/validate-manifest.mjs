@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 
-const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
+const packageManifest = JSON.parse(readFileSync("package.manifest.json", "utf8"));
+const legacyManifest = JSON.parse(readFileSync("manifest.json", "utf8"));
+const compatibility = JSON.parse(readFileSync("compatibility.json", "utf8"));
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 const required = [
   "schema_version",
@@ -15,22 +17,46 @@ const required = [
   "targets",
   "data",
 ];
-const missing = required.filter((key) => !manifest[key]);
-if (missing.length) throw new Error(`manifest.json: missing ${missing.join(", ")}`);
-if (manifest.schema_version !== 2) throw new Error("manifest.json: expected schema_version 2");
-if (manifest.id !== "com.kosmos.dictation")
-  throw new Error(`manifest.json: unexpected id ${manifest.id}`);
-if (manifest.version !== packageJson.version)
-  throw new Error(
-    `manifest.json and package.json versions differ: ${manifest.version} !== ${packageJson.version}`,
-  );
-if (manifest.kind !== "app") throw new Error("manifest.json: expected kind app");
-if (manifest.entrypoint !== "dist/index.html")
-  throw new Error("manifest.json: unexpected entrypoint");
-if (manifest.icon !== "icon.png") throw new Error("manifest.json: expected PNG icon");
-if (!existsSync(manifest.icon))
-  throw new Error(`manifest.json: missing referenced file ${manifest.icon}`);
-const requested = manifest.permissions.flatMap(({ capability, scopes = [] }) =>
+const missing = required.filter((key) => !packageManifest[key]);
+if (missing.length) throw new Error(`package.manifest.json: missing ${missing.join(", ")}`);
+if (packageManifest.schema_version !== 2)
+  throw new Error("package.manifest.json: expected schema_version 2");
+if (packageManifest.id !== "com.kosmos.dictation")
+  throw new Error(`package.manifest.json: unexpected id ${packageManifest.id}`);
+if (
+  packageManifest.version !== packageJson.version ||
+  legacyManifest.version !== packageJson.version
+)
+  throw new Error("package.json, package.manifest.json and manifest.json versions differ");
+if (packageManifest.kind !== "app") throw new Error("package.manifest.json: expected kind app");
+if (packageManifest.entrypoint !== "dist/index.html")
+  throw new Error("package.manifest.json: unexpected entrypoint");
+if (packageManifest.icon !== "icon.png")
+  throw new Error("package.manifest.json: expected PNG icon");
+if (!existsSync(packageManifest.icon))
+  throw new Error(`package.manifest.json: missing referenced file ${packageManifest.icon}`);
+if (legacyManifest.id !== "dictation")
+  throw new Error(`manifest.json: unexpected legacy id ${legacyManifest.id}`);
+if (!legacyManifest.icon || !existsSync(legacyManifest.icon))
+  throw new Error(`manifest.json: missing legacy referenced file ${legacyManifest.icon}`);
+if (JSON.stringify(legacyManifest.permissions) !== JSON.stringify(["dictation.control"]))
+  throw new Error("manifest.json: unexpected legacy Dictation permissions");
+if (
+  compatibility.current.app_id !== packageManifest.id ||
+  compatibility.current.extension_id !== legacyManifest.id
+)
+  throw new Error("compatibility.json does not point to the current Dictation identity");
+if (compatibility.legacy.remove_after !== "1.0.0")
+  throw new Error("compatibility.json: bounded removal version is required");
+if (JSON.stringify(compatibility.legacy.permissions) !== JSON.stringify(["dictation.control"]))
+  throw new Error("compatibility.json: legacy permission must be preserved");
+if (
+  !["config", "credentials", "models", "tools", "permissions"].every((item) =>
+    compatibility.legacy.data?.preserve?.includes(item),
+  )
+)
+  throw new Error("compatibility.json: Dictation data preservation is incomplete");
+const requested = packageManifest.permissions.flatMap(({ capability, scopes = [] }) =>
   scopes.map((scope) => `${capability}:${scope}`),
 );
 const expected = [
@@ -42,5 +68,5 @@ const expected = [
   "ark.write:dictation.cancel",
 ];
 if (JSON.stringify(requested) !== JSON.stringify(expected))
-  throw new Error("manifest.json: unexpected Dictation permissions");
-console.log(`manifest ok: ${manifest.id} v${manifest.version}`);
+  throw new Error("package.manifest.json: unexpected Dictation permissions");
+console.log(`manifest ok: ${packageManifest.id} v${packageManifest.version}`);

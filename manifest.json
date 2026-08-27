@@ -1,23 +1,28 @@
 {
-  "schema_version": 2,
-  "id": "com.kosmos.dictation",
+  "id": "dictation",
+  "appId": "com.kosmos.dictation",
   "name": "Dictation",
   "version": "0.2.2",
-  "kind": "app",
-  "engine_api": ">=1.0.0",
-  "entrypoint": "dist/index.html",
+  "description": "Голосовой ввод с hotkey, локальными и облачными моделями",
+  "author": "Kosmos",
+  "keplerApiVersion": "^1.1.0",
+  "kind": "vue",
   "icon": "icon.png",
-  "publisher": "kosmos",
-  "permissions": [
+  "entryHtml": "dist/index.html",
+  "devPort": 9916,
+  "width": 760,
+  "height": 620,
+  "minWidth": 560,
+  "minHeight": 460,
+  "windowEffect": "none",
+  "permissions": ["dictation.control"],
+  "commands": [
     {
-      "capability": "ark.read",
-      "scopes": ["dictation.get_state", "dictation.get_config", "dictation.list_local_models"]
-    },
-    {
-      "capability": "ark.write",
-      "scopes": ["dictation.update_config", "dictation.start_recording", "dictation.cancel"]
+      "id": "open",
+      "title": "Открыть Dictation",
+      "subtitle": "Голосовой ввод",
+      "kind": "app",
+      "mode": "open"
     }
-  ],
-  "targets": [{ "runtime": "kosmos-host", "os": ["windows"] }],
-  "data": { "access": [], "defines": [], "mappings": [] }
+  ]
 }

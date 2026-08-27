@@ -20,6 +20,17 @@ export type DictationBridge = {
   request(operation: DictationOperation, params?: Record<string, unknown>): Promise<unknown>;
 };
 
+export function createLegacyDictationBridge(bridge: DictationBridge): DictationBridge {
+  return {
+    async request(operation, params) {
+      const result = await bridge.request(operation, params);
+      const response = asObject(result);
+      if (typeof response.ok === "boolean") return response;
+      return { ok: true, data: result };
+    },
+  };
+}
+
 export type DictationState = {
   state?: string;
   microphonePermission?: "unknown" | "granted" | "denied" | "prompt";

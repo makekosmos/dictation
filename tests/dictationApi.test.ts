@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { createDictationApi } from "../src/lib/dictationApi";
+import { createDictationApi, createLegacyDictationBridge } from "../src/lib/dictationApi";
+
+const readJson = (file: string) => JSON.parse(readFileSync(file, "utf8"));
 
 const config = {
   hotkey: "Ctrl+Shift+;",
@@ -12,6 +15,32 @@ const config = {
 };
 
 describe("Dictation Cortex contract", () => {
+  it("keeps package identity, permissions, and legacy migration aligned", () => {
+    const packageJson = readJson("package.json");
+    const packageManifest = readJson("package.manifest.json");
+    const legacyManifest = readJson("manifest.json");
+    const compatibility = readJson("compatibility.json");
+
+    expect(packageJson.version).toBe(packageManifest.version);
+    expect(packageJson.version).toBe(legacyManifest.version);
+    expect(packageManifest.id).toBe("com.kosmos.dictation");
+    expect(legacyManifest.id).toBe("dictation");
+    expect(compatibility.current).toEqual({
+      app_id: packageManifest.id,
+      extension_id: legacyManifest.id,
+      operation_namespace: "dictation",
+    });
+    expect(compatibility.legacy.permissions).toEqual(["dictation.control"]);
+    expect(compatibility.legacy.data.preserve).toEqual([
+      "config",
+      "credentials",
+      "models",
+      "tools",
+      "permissions",
+    ]);
+    expect(compatibility.legacy.remove_after).toBe("1.0.0");
+  });
+
   it("exposes only the manifest-scoped lifecycle and config methods", async () => {
     const calls: string[] = [];
     const params: Record<string, unknown>[] = [];
@@ -89,5 +118,18 @@ describe("Dictation Cortex contract", () => {
 
     await expect(api.startRecording()).rejects.toThrow("Микрофон недоступен");
     await expect(api.cancel()).rejects.toThrow("Сервис диктовки недоступен");
+  });
+
+  it("adapts legacy raw responses without widening the renderer API", async () => {
+    const legacy = createLegacyDictationBridge({
+      request: async (operation) =>
+        operation === "dictation.get_config"
+          ? { config, apiKey: "secret", hasApiKey: true }
+          : { ok: false, error: "Отклонено" },
+    });
+    const api = createDictationApi(legacy)!;
+
+    await expect(api.getConfig()).resolves.toEqual({ config, hasApiKey: true });
+    await expect(api.startRecording()).rejects.toThrow("Отклонено");
   });
 });

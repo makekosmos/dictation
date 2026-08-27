@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "current": {
+    "app_id": "com.kosmos.dictation",
+    "extension_id": "dictation",
+    "operation_namespace": "dictation"
+  },
+  "legacy": {
+    "app_ids": [],
+    "extension_ids": ["dictation"],
+    "permissions": ["dictation.control"],
+    "data": {
+      "preserve": ["config", "credentials", "models", "tools", "permissions"],
+      "legacy_roots": [
+        "extensions/dictation",
+        "extensions-data/dictation",
+        "extensions-backups/dictation"
+      ]
+    },
+    "supported_until": "Dictation 0.x",
+    "remove_after": "1.0.0"
+  }
+}

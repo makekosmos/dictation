@@ -13,7 +13,12 @@ import { Settings2 } from "@lucide/vue";
 import { computed, onMounted, ref } from "vue";
 import groqIconMarkup from "./assets/providers/groq.svg?raw";
 import kosmosIconMarkup from "./assets/providers/kosmos.svg?raw";
-import { createDictationApi, type DictationConfig, type LocalModels } from "./lib/dictationApi";
+import {
+  createDictationApi,
+  createLegacyDictationBridge,
+  type DictationConfig,
+  type LocalModels,
+} from "./lib/dictationApi";
 
 type Config = DictationConfig;
 
@@ -72,7 +77,10 @@ const selectedModel = computed(
     `${config.value.provider}:${config.value.provider === "local" ? config.value.localModelId : config.value.model}`,
 );
 
-const dictation = createDictationApi(window.kosmosApp?.ark);
+const legacyBridge = window.kepler?.ark
+  ? createLegacyDictationBridge(window.kepler.ark)
+  : undefined;
+const dictation = createDictationApi(window.kosmosApp?.ark ?? legacyBridge);
 
 function requireDictation() {
   if (!dictation) throw new Error("Откройте Dictation из Kosmos");
