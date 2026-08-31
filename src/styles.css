@@ -1,4 +1,5 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+@source "./**/*.{vue,ts}";
 @source "../../imago/**/*.{vue,ts}";
 @import "@kosmos/visuals/theme/css";
 

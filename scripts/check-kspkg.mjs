@@ -6,10 +6,15 @@ import { readCanonicalZip } from "./deterministic-zip.mjs";
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 const manifest = JSON.parse(readFileSync("package.manifest.json", "utf8"));
 const output = path.resolve(`release/dictation-${manifest.version}.kspkg`);
+const fixture = path.resolve(`tests/fixtures/dictation-${manifest.version}.kspkg`);
 if (packageJson.version !== manifest.version) {
   throw new Error("package.json and package.manifest.json versions differ");
 }
 if (!existsSync(output)) throw new Error(`missing package: ${output}`);
+if (!existsSync(fixture)) throw new Error(`missing package fixture: ${fixture}`);
+if (process.env.CI && !readFileSync(output).equals(readFileSync(fixture))) {
+  throw new Error(`${output}: generated package differs from the reviewed fixture`);
+}
 if (readdirSync("release").some((name) => name.endsWith(".kext"))) {
   throw new Error("release contains an inactive .kext artifact");
 }

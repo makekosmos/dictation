@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
@@ -6,6 +7,20 @@ import { createDeterministicZip, readCanonicalZip } from "../scripts/determinist
 import { collectPackageFiles } from "../scripts/package-kspkg.mjs";
 
 describe("deterministic package archive", () => {
+  test("pins the reviewed Package v2 fixture", () => {
+    const fixture = readFileSync(path.join(import.meta.dirname, "fixtures/dictation-0.2.2.kspkg"));
+    expect(createHash("sha256").update(fixture).digest("hex")).toBe(
+      "2a1c001a2240275a4f8fa5307cce1faf1132442f8a51e98bbbbd7de1800ffac6",
+    );
+    const entries = new Map(readCanonicalZip(fixture).map((entry) => [entry.name, entry.data]));
+    expect(entries.get("manifest.json")).toEqual(
+      readFileSync(path.join(import.meta.dirname, "..", "package.manifest.json")),
+    );
+    expect(entries.get("compatibility.json")).toEqual(
+      readFileSync(path.join(import.meta.dirname, "..", "compatibility.json")),
+    );
+  });
+
   test("is order-independent and rejects traversal", () => {
     const files = [
       { name: "manifest.json", data: Buffer.from("{}") },
