@@ -8,9 +8,9 @@ import { collectPackageFiles } from "../scripts/package-kspkg.mjs";
 
 describe("deterministic package archive", () => {
   test("pins the reviewed Package v2 fixture", () => {
-    const fixture = readFileSync(path.join(import.meta.dirname, "fixtures/dictation-0.2.2.kspkg"));
+    const fixture = readFileSync(path.join(import.meta.dirname, "fixtures/dictation-0.2.3.kspkg"));
     expect(createHash("sha256").update(fixture).digest("hex")).toBe(
-      "2a1c001a2240275a4f8fa5307cce1faf1132442f8a51e98bbbbd7de1800ffac6",
+      "30f42dadaf4d0412033f0fd63fbb116f3a8d4717e57e0bcba61d3930b019623f",
     );
     const entries = new Map(readCanonicalZip(fixture).map((entry) => [entry.name, entry.data]));
     expect(entries.get("manifest.json")).toEqual(
