@@ -1,5 +1,5 @@
-@import "tailwindcss";
-@source "../../imago/**/*.{vue,ts}";
+@import "tailwindcss" source(none);
+@source "./**/*.{vue,ts}";
 @import "@kosmos/visuals/theme/css";
 
 @custom-variant dark (&:is(.dark *));

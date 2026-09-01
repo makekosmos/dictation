@@ -208,7 +208,7 @@ onMounted(load);
             title="Сохранить настройки"
             description="Новая горячая клавиша применяется сразу."
             button-label="Сохранить"
-            variant="surface"
+            variant="ghost"
             :loading="saving"
             @click="save"
           />
@@ -223,14 +223,14 @@ onMounted(load);
                 : 'Добавьте ключ на странице «Ключи» в Kosmos Manager.'
             "
             button-label="В Kosmos Manager"
-            variant="surface"
+            variant="ghost"
             disabled
           />
           <SettingsButtonRow
             :title="providerLabel"
             description="Микрофон, горячая клавиша и вставка текста выполняются Kosmos Desktop."
             button-label="Активно"
-            variant="surface"
+            variant="ghost"
             disabled
             muted
           />
