@@ -1,6 +1,6 @@
 # Dictation
 
-Marketplace app for Kosmos Desktop. It owns the Dictation UI and requests only the six manifest-scoped `dictation.*` operations; microphone, global hotkey, overlay lifecycle, credentials, transcription and text injection remain in the Cortex host.
+Marketplace app for Kosmos Desktop. It owns the Dictation UI and a Windows worker that orchestrates capture, transcription and insertion through the manifest-scoped `dictation.v2` Engine operations. Microphone, global hotkey, overlay lifecycle, credentials, transcription providers and text injection remain Engine-owned capabilities; the app never accesses them directly.
 
 ```powershell
 bun install --frozen-lockfile

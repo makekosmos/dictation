@@ -30,6 +30,7 @@ const fallback: Config = {
   model: "whisper-large-v3-turbo",
   localModelId: "small",
   providerEnabled: true,
+  autostart: false,
 };
 const config = ref<Config>({ ...fallback });
 const loading = ref(true);
@@ -118,6 +119,7 @@ async function save() {
   message.value = "";
   try {
     await requireDictation().updateConfig(config.value);
+    await requireDictation().setAutostart(config.value.autostart);
     message.value = "Настройки сохранены";
   } catch (error) {
     message.value = error instanceof Error ? error.message : "Не удалось сохранить";
@@ -212,6 +214,13 @@ onMounted(load);
             :loading="saving"
             @click="save"
           />
+          <label class="dictation-autostart">
+            <input v-model="config.autostart" type="checkbox" />
+            <span>
+              <strong>Запускать при входе в Windows</strong>
+              <small>Автозапуск настраивается через Kosmos Engine.</small>
+            </span>
+          </label>
         </SettingsList>
 
         <SettingsList>

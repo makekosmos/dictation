@@ -2,7 +2,7 @@
   "id": "dictation",
   "appId": "com.kosmos.dictation",
   "name": "Dictation",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Голосовой ввод с hotkey, локальными и облачными моделями",
   "author": "Kosmos",
   "keplerApiVersion": "^1.1.0",

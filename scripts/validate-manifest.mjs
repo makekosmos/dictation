@@ -60,6 +60,13 @@ const requested = packageManifest.permissions.flatMap(({ capability, scopes = []
   scopes.map((scope) => `${capability}:${scope}`),
 );
 const expected = [
+  "dictation.control:dictation.capture.start",
+  "dictation.control:dictation.capture.stop",
+  "dictation.control:dictation.speech.transcribe",
+  "dictation.control:dictation.input.insert_text",
+  "dictation.control:dictation.window.foreground",
+  "dictation.control:dictation.lifecycle.set_autostart",
+  "worker.invoke:dictation.trigger",
   "ark.read:dictation.get_state",
   "ark.read:dictation.get_config",
   "ark.read:dictation.list_local_models",

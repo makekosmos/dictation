@@ -2,13 +2,28 @@
   "schema_version": 2,
   "id": "com.kosmos.dictation",
   "name": "Dictation",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "kind": "app",
   "engine_api": ">=1.0.0",
   "entrypoint": "dist/index.html",
   "icon": "icon.png",
   "publisher": "kosmos",
   "permissions": [
+    {
+      "capability": "dictation.control",
+      "scopes": [
+        "dictation.capture.start",
+        "dictation.capture.stop",
+        "dictation.speech.transcribe",
+        "dictation.input.insert_text",
+        "dictation.window.foreground",
+        "dictation.lifecycle.set_autostart"
+      ]
+    },
+    {
+      "capability": "worker.invoke",
+      "scopes": ["dictation.trigger"]
+    },
     {
       "capability": "ark.read",
       "scopes": ["dictation.get_state", "dictation.get_config", "dictation.list_local_models"]
@@ -18,6 +33,14 @@
       "scopes": ["dictation.update_config", "dictation.start_recording", "dictation.cancel"]
     }
   ],
-  "targets": [{ "runtime": "kosmos-host", "os": ["windows"] }],
+  "targets": [
+    { "runtime": "kosmos-host", "os": ["windows"] },
+    {
+      "runtime": "worker",
+      "os": ["windows"],
+      "arch": ["x86_64"],
+      "entrypoint": "worker/dictation-worker.exe"
+    }
+  ],
   "data": { "access": [], "defines": [], "mappings": [] }
 }
