@@ -183,12 +183,14 @@ function isObject(value: unknown): value is Message {
 
 if (import.meta.main) {
   const worker = new DictationWorker((message) =>
-    Bun.write(Bun.stdout, `${JSON.stringify(message)}\n`),
+    process.stdout.write(`${JSON.stringify(message)}\n`),
   );
-  const decoder = new TextDecoder();
+  process.stdin.setEncoding("utf8");
+  process.stdin.resume();
   let buffer = "";
-  for await (const chunk of Bun.stdin.stream()) {
-    buffer += decoder.decode(chunk, { stream: true });
+  process.stdin.on("data", (chunk: string) => {
+    buffer += chunk;
+    if (buffer.startsWith("\uFEFF")) buffer = buffer.slice(1);
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
     for (const line of lines) {
@@ -196,18 +198,16 @@ if (import.meta.main) {
       try {
         void worker.message(JSON.parse(line)).catch(() => {
           worker.cancel();
-          Bun.write(
-            Bun.stdout,
+          process.stdout.write(
             `${JSON.stringify({ method: "worker.event", event: "dictation.error", data: { code: "worker-message-failed", retryable: true } })}\n`,
           );
         });
       } catch {
         worker.cancel();
-        Bun.write(
-          Bun.stdout,
+        process.stdout.write(
           `${JSON.stringify({ method: "worker.event", event: "dictation.error", data: { code: "invalid-json", retryable: false } })}\n`,
         );
       }
     }
-  }
+  });
 }
