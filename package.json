@@ -2,7 +2,7 @@
   "name": "@kosmos/app-dictation",
   "version": "0.2.5",
   "private": true,
-  "description": "Dictation — Marketplace extension for Kosmos Desktop.",
+  "description": "Dictation — Marketplace extension for Kosmos Engine.",
   "type": "module",
   "scripts": {
     "build": "vite build",

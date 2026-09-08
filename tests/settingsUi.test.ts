@@ -14,6 +14,8 @@ describe("Dictation settings surface", () => {
     expect(app).toContain('<span class="dictation-titlebar-title">Dictation</span>');
     expect(app).toContain('title="Модель"');
     expect(app).toContain('@update:model-value="selectModel"');
+    expect(app).toContain("через Kosmos Engine");
+    expect(app).not.toContain("Kosmos Desktop.");
     expect(app).toContain("groqIconMarkup");
     expect(app).toContain("kosmosIconMarkup");
     expect(read("src/assets/providers/kosmos.svg")).toContain('fill="#fff"');

@@ -165,7 +165,7 @@ onMounted(load);
           <SettingsTextInputRow
             v-model="config.hotkey"
             title="Горячая клавиша"
-            description="Работает глобально, пока запущен Kosmos Desktop."
+            description="Работает глобально через Kosmos Engine."
             placeholder="Ctrl+Shift+;"
           />
           <SettingsTextInputRow
@@ -237,7 +237,7 @@ onMounted(load);
           />
           <SettingsButtonRow
             :title="providerLabel"
-            description="Микрофон, горячая клавиша и вставка текста выполняются Kosmos Desktop."
+            description="Микрофон, горячая клавиша и вставка текста выполняются Kosmos Engine."
             button-label="Активно"
             variant="ghost"
             disabled
