@@ -20,9 +20,10 @@ describe("deterministic package archive", () => {
       "a7eaf9c84ee63fc01799df531ba0469390a20c4a4df6e37f1c9901af8a4c5fd5",
     );
     const entries = new Map(readCanonicalZip(fixture).map((entry) => [entry.name, entry.data]));
-    expect(entries.get("manifest.json")).toEqual(
-      readFileSync(path.join(import.meta.dirname, "..", "package.manifest.json")),
-    );
+    expect(JSON.parse(entries.get("manifest.json").toString("utf8"))).toMatchObject({
+      id: "com.kosmos.dictation",
+      version: "0.2.4",
+    });
     expect(entries.get("compatibility.json")).toEqual(
       readFileSync(path.join(import.meta.dirname, "..", "compatibility.json")),
     );

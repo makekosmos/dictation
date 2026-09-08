@@ -1,8 +1,8 @@
 {
   "name": "@kosmos/app-dictation",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
-  "description": "Dictation — Marketplace extension for Kosmos Desktop.",
+  "description": "Dictation — Marketplace extension for Kosmos Engine.",
   "type": "module",
   "scripts": {
     "build": "vite build",
@@ -14,7 +14,8 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "test": "vitest run",
-    "package:kspkg": "bun run validate && bun run build && node scripts/package-kspkg.mjs",
+    "build:worker": "node scripts/build-worker.mjs",
+    "package:kspkg": "bun run validate && bun run build && bun run build:worker && node scripts/package-kspkg.mjs",
     "package:smoke": "node scripts/check-kspkg.mjs",
     "check": "bun run check:manifest && bun run lint && bun run format:check && bun run typecheck && bun run test && bun run package:kspkg && bun run package:smoke"
   },

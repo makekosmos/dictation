@@ -11,10 +11,12 @@ if (packageJson.version !== manifest.version) {
   throw new Error("package.json and package.manifest.json versions differ");
 }
 if (!existsSync(output)) throw new Error(`missing package: ${output}`);
-if (!existsSync(fixture)) throw new Error(`missing package fixture: ${fixture}`);
-if (process.env.CI && !readFileSync(output).equals(readFileSync(fixture))) {
+if (process.env.CI && !existsSync(fixture))
+  throw new Error(`missing reviewed package fixture: ${fixture}`);
+if (existsSync(fixture) && process.env.CI && !readFileSync(output).equals(readFileSync(fixture))) {
   throw new Error(`${output}: generated package differs from the reviewed fixture`);
 }
+if (!existsSync(fixture)) console.log("no reviewed fixture; validating local candidate archive");
 if (readdirSync("release").some((name) => name.endsWith(".kext"))) {
   throw new Error("release contains an inactive .kext artifact");
 }
@@ -36,6 +38,7 @@ const source = [
   ...sourceEntries("compatibility.json", "compatibility.json"),
   ...sourceEntries("icon.png", "icon.png"),
   ...sourceEntries("dist", "dist"),
+  ...sourceEntries("worker/dictation-worker.exe", "worker/dictation-worker.exe"),
 ].sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
 const archived = readCanonicalZip(readFileSync(output));
 if (

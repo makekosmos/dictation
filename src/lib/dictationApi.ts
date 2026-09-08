@@ -6,6 +6,7 @@ export type DictationConfig = {
   model: string;
   localModelId: string;
   providerEnabled: boolean;
+  autostart: boolean;
 };
 
 export type DictationOperation =
@@ -14,7 +15,8 @@ export type DictationOperation =
   | "dictation.list_local_models"
   | "dictation.update_config"
   | "dictation.start_recording"
-  | "dictation.cancel";
+  | "dictation.cancel"
+  | "dictation.lifecycle.set_autostart";
 
 export type DictationBridge = {
   request(operation: DictationOperation, params?: Record<string, unknown>): Promise<unknown>;
@@ -56,6 +58,7 @@ export type DictationApi = {
   updateConfig(config: DictationConfig): Promise<void>;
   startRecording(): Promise<void>;
   cancel(): Promise<void>;
+  setAutostart(enabled: boolean): Promise<void>;
 };
 
 export class DictationApiError extends Error {
@@ -81,6 +84,7 @@ function sanitizeConfig(value: unknown): Partial<DictationConfig> {
   if (typeof input.localModelId === "string") config.localModelId = input.localModelId;
   else if (typeof input.localModel === "string") config.localModelId = input.localModel;
   if (typeof input.providerEnabled === "boolean") config.providerEnabled = input.providerEnabled;
+  if (typeof input.autostart === "boolean") config.autostart = input.autostart;
   return config;
 }
 
@@ -165,6 +169,9 @@ export function createDictationApi(bridge: DictationBridge | undefined): Dictati
     },
     async cancel() {
       await request(bridge, "dictation.cancel");
+    },
+    async setAutostart(enabled) {
+      await request(bridge, "dictation.lifecycle.set_autostart", { enabled });
     },
   };
 }
