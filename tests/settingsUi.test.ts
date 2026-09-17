@@ -9,7 +9,8 @@ describe("Dictation settings surface", () => {
     const packageJson = JSON.parse(read("package.json"));
 
     expect(packageJson.dependencies["@kosmos/visuals"]).toBe("npm:@makekosmos/visuals@0.1.2");
-    expect(app).toContain('<DesktopChrome appearance="settings" platform="windows">');
+    expect(app).toContain('<DesktopChrome appearance="settings" :platform="chromePlatform">');
+    expect(app).toContain("document.documentElement.dataset.platform");
     expect(app).toContain('<SettingsSidebar title="Kosmos"');
     expect(app).toContain('<span class="dictation-titlebar-title">Dictation</span>');
     expect(app).toContain('title="Модель"');

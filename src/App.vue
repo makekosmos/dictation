@@ -8,6 +8,7 @@ import {
   SettingsSidebarButton,
   SettingsTextInputRow,
   Skeleton,
+  type TitlebarPlatform,
 } from "@kosmos/visuals";
 import { Settings2 } from "@lucide/vue";
 import { computed, onMounted, ref } from "vue";
@@ -83,6 +84,11 @@ const legacyBridge = window.kepler?.ark
   : undefined;
 const dictation = createDictationApi(window.kosmosApp?.ark ?? legacyBridge);
 
+const chromePlatform = computed<TitlebarPlatform | undefined>(() => {
+  const marker = document.documentElement.dataset.platform;
+  return marker === "mac" || marker === "windows" || marker === "linux" ? marker : undefined;
+});
+
 function requireDictation() {
   if (!dictation) throw new Error("Откройте Dictation из Kosmos");
   return dictation;
@@ -132,7 +138,7 @@ onMounted(load);
 </script>
 
 <template>
-  <DesktopChrome appearance="settings" platform="windows">
+  <DesktopChrome appearance="settings" :platform="chromePlatform">
     <template #sidebar>
       <SettingsSidebar title="Kosmos" background="var(--bg-app)">
         <div class="dictation-sidebar-scroll kosmos-scroll">
