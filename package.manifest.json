@@ -34,7 +34,7 @@
     }
   ],
   "targets": [
-    { "runtime": "kosmos-host", "os": ["windows"] },
+    { "runtime": "kosmos-host", "os": ["windows", "linux"] },
     {
       "runtime": "worker",
       "os": ["windows"],
