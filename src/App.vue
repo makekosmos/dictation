@@ -86,9 +86,7 @@ const dictation = createDictationApi(window.kosmosApp?.ark ?? legacyBridge);
 
 const chromePlatform = computed<TitlebarPlatform | undefined>(() => {
   const marker = document.documentElement.dataset.platform;
-  return marker === "mac" || marker === "windows" || marker === "linux"
-    ? marker
-    : undefined;
+  return marker === "mac" || marker === "windows" || marker === "linux" ? marker : undefined;
 });
 
 function requireDictation() {
