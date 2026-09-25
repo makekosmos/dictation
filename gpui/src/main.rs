@@ -76,6 +76,17 @@ fn claim_single_instance() -> bool {
 }
 
 fn main() {
+    // Headless app with no console — without this a panic dies silently.
+    // Writes to %APPDATA%\Kosmos\dictation-gpui-panic.log.
+    std::panic::set_hook(Box::new(|info| {
+        if let Ok(dir) = kosmos_gpui_kit::engine::data_dir() {
+            let _ = std::fs::write(
+                dir.join("dictation-gpui-panic.log"),
+                format!("{info}\n\n{:?}", std::backtrace::Backtrace::capture()),
+            );
+        }
+    }));
+
     #[cfg(windows)]
     if !claim_single_instance() {
         return;
