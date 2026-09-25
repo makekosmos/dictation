@@ -63,6 +63,9 @@ pub struct DictationPill {
     delivery: Option<PillDelivery>,
     /// Ring buffer of the last 120 RMS samples pushed by the owner.
     levels: Vec<f32>,
+    /// Per-frame eased copy of `levels` — bars glide toward the latest
+    /// snapshot at render fps instead of stepping at the data rate.
+    display: Vec<f32>,
     hotkey: String,
     /// Enter-animation clock (`pill-in`, 260ms) — drives repaints through
     /// the ticker instead of `with_animation`, which only queued a frame per
@@ -98,6 +101,11 @@ impl DictationPill {
                 }
                 // Enter animation + live waveform both repaint at tick rate;
                 // processing additionally advances its synthetic wave clock.
+                if this.phase == PillPhase::Recording {
+                    for (d, t) in this.display.iter_mut().zip(this.levels.iter()) {
+                        *d += (t - *d) * 0.35;
+                    }
+                }
                 if entering || processing || this.phase == PillPhase::Recording {
                     cx.notify();
                 }
@@ -111,6 +119,7 @@ impl DictationPill {
             phase,
             delivery: None,
             levels: Vec::new(),
+            display: Vec::new(),
             hotkey,
             enter_at: std::time::Instant::now(),
             processing_time: 0.0,
@@ -139,6 +148,10 @@ impl DictationPill {
         self.phase = phase;
         self.delivery = delivery;
         self.levels = levels;
+        if self.display.len() != self.levels.len() {
+            // Session/target width changed — start flat, glide up.
+            self.display.resize(self.levels.len(), 0.0);
+        }
         self.hotkey = hotkey;
         cx.notify();
     }
@@ -153,7 +166,7 @@ impl Render for DictationPill {
             Some(d) => (Wave::Idle, d.dot_color()),
             None => match phase {
                 PillPhase::Starting => (Wave::Idle, WAVE_RECORDING),
-                PillPhase::Recording => (Wave::Live(self.levels.clone()), WAVE_RECORDING),
+                PillPhase::Recording => (Wave::Live(self.display.clone()), WAVE_RECORDING),
                 PillPhase::Processing => (
                     Wave::Processing {
                         time: self.processing_time,

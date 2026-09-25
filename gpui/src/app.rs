@@ -168,7 +168,9 @@ impl DictationApp {
     fn dictation_begin(&mut self, cx: &mut Context<Self>) {
         self.session += 1;
         self.delivery = None;
-        self.levels.clear();
+        // Fixed-width history from frame one: without it the first samples
+        // remap every bar slot as the buffer grows ("bars squeeze in").
+        self.levels = vec![0.0; 120].into();
         if self.pill.is_none() {
             self.pill = crate::pill::open(cx.entity(), self.dictation_hotkey(), cx);
         }
@@ -474,7 +476,7 @@ impl DictationApp {
                     {
                         self.session += 1;
                         self.delivery = None;
-                        self.levels.clear();
+                        self.levels = vec![0.0; 120].into();
                         self.capture = Some(capture_id);
                         if self.pill.is_none() {
                             self.pill = crate::pill::open(cx.entity(), self.dictation_hotkey(), cx);
