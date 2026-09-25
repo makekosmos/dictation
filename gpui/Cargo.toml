@@ -15,6 +15,7 @@ imago-gpui = { git = "https://github.com/makekosmos/imago.git", rev = "b9dd284e7
 # specs must stay identical to cortex manager-gpui's.
 kosmos-gpui-kit = { git = "https://github.com/makekosmos/kosmos-gpui-kit", rev = "b5f9b931cc4aff7aa248c88d6719569a1bd97fce" }
 serde_json = "1.0.151"
+windows-sys = { version = "0.61.2", features = ["Win32_System_Threading", "Win32_Foundation"] }
 
 # Dev builds: keep debug info but optimize — unoptimized taffy/cosmic-text/
 # gpui (and our own render path) make even modest UIs run at ~20fps.

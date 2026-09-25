@@ -30,7 +30,25 @@ fn window_bounds(cx: &mut App) -> Bounds<gpui::Pixels> {
     }
 }
 
+/// Single-instance guard: every process subscribes to Engine hotkey events,
+/// so a duplicate instance would spawn a second pill for each press. The
+/// mutex handle intentionally leaks for the process lifetime.
+#[cfg(windows)]
+fn claim_single_instance() -> bool {
+    use windows_sys::Win32::{
+        Foundation::{GetLastError, ERROR_ALREADY_EXISTS},
+        System::Threading::CreateMutexW,
+    };
+    let name: Vec<u16> = "Local\\KosmosDictationGpui\0".encode_utf16().collect();
+    let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+    !handle.is_null() && unsafe { GetLastError() } != ERROR_ALREADY_EXISTS
+}
+
 fn main() {
+    #[cfg(windows)]
+    if !claim_single_instance() {
+        return;
+    }
     gpui::application()
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
