@@ -65,8 +65,10 @@ impl DictationApp {
         };
         this.refresh(cx);
         cx.spawn(async move |this, cx| loop {
+            // 30ms ≈ the Engine level-event rate — draining slower batches
+            // several samples per push and the waveform visibly steps.
             cx.background_executor()
-                .timer(std::time::Duration::from_millis(100))
+                .timer(std::time::Duration::from_millis(30))
                 .await;
             if this.update(cx, |this, cx| this.drain(cx)).is_err() {
                 break;

@@ -8,8 +8,8 @@ use crate::pill::{DictationPill, BOTTOM_MARGIN, PILL_H, PILL_W};
 use kosmos_gpui_kit::theme::*;
 
 /// dictation-pill-waveform.ts constants (history 120 lives on `DictationApp`).
-const WAVE_BAR_W: f32 = 3.;
-const WAVE_BAR_GAP: f32 = 2.;
+const WAVE_BAR_W: f32 = 4.;
+const WAVE_BAR_GAP: f32 = 3.;
 const WAVE_BAR_MIN_H: f32 = 4.;
 const WAVE_SENSITIVITY: f32 = 0.8;
 const WAVE_FADE_PX: f32 = 48.;
