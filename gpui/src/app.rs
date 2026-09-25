@@ -481,12 +481,12 @@ impl DictationApp {
                     }
                 }
                 if self.phase == Some(PillPhase::Recording) {
-                    // AnalyserNode smoothingTimeConstant=0.85 parity — fast
-                    // attack, slow release so bars don't jitter.
+                    // AnalyserNode smoothingTimeConstant=0.85 parity —
+                    // bidirectional EMA so bars don't jitter packet to packet.
                     let level = self
                         .levels
                         .back()
-                        .map(|prev| level.max(prev * 0.72))
+                        .map(|prev| prev * 0.75 + level * 0.25)
                         .unwrap_or(level)
                         .clamp(0.0, 1.0);
                     if self.levels.len() >= 120 {

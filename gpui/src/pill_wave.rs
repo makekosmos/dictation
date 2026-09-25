@@ -98,7 +98,7 @@ pub fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: u32, window: &mut 
             let total =
                 bar_count as f32 * WAVE_BAR_W + (bar_count.saturating_sub(1)) as f32 * WAVE_BAR_GAP;
             let start_x = bounds.origin.x + px((w - total) / 2.);
-            let bars: Vec<f32> = match wave {
+            let mut bars: Vec<f32> = match wave {
                 Wave::Live(values) => (0..bar_count)
                     .map(|i| sample_value(values, i, bar_count))
                     .collect(),
@@ -109,6 +109,15 @@ pub fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: u32, window: &mut 
                 } => processing_bars(*time, last_active, *blend, bar_count),
                 Wave::Idle => unreachable!(),
             };
+            // 3-tap spatial smoothing — adjacent bars read as one coherent
+            // shape (Vue drew a per-frame spectrum snapshot, not a scrolling
+            // history, so neighbour bars were never independent noise).
+            if matches!(wave, Wave::Live(_)) && bars.len() > 2 {
+                let src = bars.clone();
+                for i in 1..bars.len() - 1 {
+                    bars[i] = (src[i - 1] + src[i] * 2.0 + src[i + 1]) / 4.0;
+                }
+            }
             for (i, value) in bars.iter().enumerate() {
                 let x = start_x + px(i as f32 * step);
                 let bar_h = (value * h * WAVE_SENSITIVITY).max(WAVE_BAR_MIN_H).min(h);
