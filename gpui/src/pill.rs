@@ -195,7 +195,7 @@ impl Render for DictationPill {
             .rounded(px(8.))
             .border_1()
             .border_color(fade(FG(), 0.18))
-            .bg(fade(POPOVER(), 0.94))
+            .bg(fade(POPOVER(), 1.0))
             .flex()
             .flex_col()
             .overflow_hidden()
