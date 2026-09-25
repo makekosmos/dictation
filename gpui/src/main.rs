@@ -11,6 +11,8 @@ mod pill_wave;
 mod view;
 mod worker;
 
+use std::sync::atomic::AtomicBool;
+
 use gpui::{
     px, size, App, AppContext, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions,
 };
@@ -30,18 +32,47 @@ fn window_bounds(cx: &mut App) -> Bounds<gpui::Pixels> {
     }
 }
 
+/// Set when a second process launch asks the running instance to resurface
+/// its status window (drain loop consumes the flag and activates it).
+pub(crate) static SHOW_REQUESTED: AtomicBool = AtomicBool::new(false);
+
 /// Single-instance guard: every process subscribes to Engine hotkey events,
 /// so a duplicate instance would spawn a second pill for each press. The
-/// mutex handle intentionally leaks for the process lifetime.
+/// mutex handle intentionally leaks for the process lifetime. A second launch
+/// signals `Local\KosmosDictationGpuiShow` so the running instance reopens
+/// its (possibly minimized) status window, then exits quietly.
 #[cfg(windows)]
 fn claim_single_instance() -> bool {
+    use std::sync::atomic::Ordering;
     use windows_sys::Win32::{
         Foundation::{GetLastError, ERROR_ALREADY_EXISTS},
-        System::Threading::CreateMutexW,
+        System::Threading::{CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject},
     };
-    let name: Vec<u16> = "Local\\KosmosDictationGpui\0".encode_utf16().collect();
-    let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
-    !handle.is_null() && unsafe { GetLastError() } != ERROR_ALREADY_EXISTS
+    let mutex_name: Vec<u16> = "Local\\KosmosDictationGpui\0".encode_utf16().collect();
+    let event_name: Vec<u16> = "Local\\KosmosDictationGpuiShow\0".encode_utf16().collect();
+    let handle = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr()) };
+    if handle.is_null() {
+        return true; // fail-open: running beats not running
+    }
+    let event = unsafe { CreateEventW(std::ptr::null(), 0, 0, event_name.as_ptr()) };
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        if !event.is_null() {
+            unsafe { SetEvent(event) };
+        }
+        return false;
+    }
+    if !event.is_null() {
+        // HANDLE as usize — the waiter thread owns the handle for life
+        // (raw pointers aren't Send; usize is).
+        let event = event as usize;
+        std::thread::spawn(move || unsafe {
+            loop {
+                WaitForSingleObject(event as _, u32::MAX);
+                SHOW_REQUESTED.store(true, Ordering::SeqCst);
+            }
+        });
+    }
+    true
 }
 
 fn main() {
@@ -49,7 +80,10 @@ fn main() {
     if !claim_single_instance() {
         return;
     }
+    // Explicit: the pill is a transient overlay and the status window may be
+    // minimized/closed-adjacent — dictation keeps working without any window.
     gpui::application()
+        .with_quit_mode(gpui::QuitMode::Explicit)
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
             gpui_component::init(cx);

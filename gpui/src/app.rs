@@ -25,6 +25,9 @@ pub struct DictationApp {
 
     /// Dictation pill overlay window while a recording session is active.
     pub pill: Option<WindowHandle<DictationPill>>,
+    /// Status window handle — minimized instead of closed (the worker/Engine
+    /// subscription lives on this entity, so the window must not die).
+    status: Option<AnyWindowHandle>,
     /// Session phase shared by the pill and the status window.
     pub phase: Option<PillPhase>,
     /// `captureId` of the live `dictation.capture.start` session — ours or
@@ -46,8 +49,16 @@ pub struct DictationApp {
 }
 
 impl DictationApp {
-    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let data_dir = kosmos_gpui_kit::engine::data_dir().ok();
+        // Closing the only window would drop this entity — the worker, the
+        // Engine subscription and the hotkey flow with it. Intercept close:
+        // minimize instead (same affordance as tray apps — dictation keeps
+        // working, the window is gone from view).
+        window.on_window_should_close(cx, |window, _cx| {
+            window.minimize_window();
+            false
+        });
         let mut this = Self {
             worker: Worker::start(data_dir),
             slots: HashMap::new(),
@@ -55,6 +66,7 @@ impl DictationApp {
             notice: None,
             worker_dead: false,
             pill: None,
+            status: Some(window.window_handle()),
             phase: None,
             capture: None,
             last_duration_ms: 0.0,
@@ -288,6 +300,13 @@ impl DictationApp {
     // --- Worker drain --------------------------------------------------------
 
     fn drain(&mut self, cx: &mut Context<Self>) {
+        // Second-launch wake: resurface the (possibly minimized) window.
+        if crate::SHOW_REQUESTED.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            if let Some(h) = self.status {
+                let _ = h.update(cx, |_, window, _| window.activate_window());
+            }
+        }
+
         loop {
             let reply = match self.worker.replies.try_recv() {
                 Ok(reply) => reply,

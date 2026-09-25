@@ -59,16 +59,30 @@ impl Render for DictationApp {
                         .font_weight(FontWeight::SEMIBOLD)
                         .child("Kosmos Dictation"),
                 )
-                .child({
-                    let s = vstr(&state, "state");
-                    let color = match s.as_str() {
-                        "recording" => DESTRUCTIVE(),
-                        "transcribing" | "waiting" => WARN(),
-                        "error" => DESTRUCTIVE(),
-                        _ => SUCCESS(),
-                    };
-                    badge(state_label(&s), color)
-                }),
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child({
+                            let s = vstr(&state, "state");
+                            let color = match s.as_str() {
+                                "recording" => DESTRUCTIVE(),
+                                "transcribing" | "waiting" => WARN(),
+                                "error" => DESTRUCTIVE(),
+                                _ => SUCCESS(),
+                            };
+                            badge(state_label(&s), color)
+                        })
+                        // Window controls (no native titlebar): – hides the
+                        // window (dictation keeps running), × quits the app.
+                        .child(titlebar_btn("–").on_click(cx.listener(|_, _, window, _| {
+                            window.minimize_window();
+                        })))
+                        .child(titlebar_btn("×").on_click(cx.listener(|_, _, _, cx| {
+                            cx.quit();
+                        }))),
+                ),
         );
 
         if let Some(error) = &self.error {
@@ -341,4 +355,20 @@ fn models_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyEle
         el = el.child(kv("Скачивание", text));
     }
     el.into_any_element()
+}
+
+/// Small square window-control button for the titlebar-less header.
+fn titlebar_btn(label: &'static str) -> Stateful<Div> {
+    div()
+        .id(SharedString::from(format!("tb-{label}")))
+        .w(px(22.))
+        .h(px(22.))
+        .rounded(px(4.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px(12.))
+        .text_color(fade(FG(), 0.6))
+        .hover(|el| el.bg(fade(FG(), 0.1)).text_color(c(FG())))
+        .child(label)
 }
