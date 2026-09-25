@@ -64,6 +64,10 @@ pub struct DictationPill {
     /// Ring buffer of the last 120 RMS samples pushed by the owner.
     levels: Vec<f32>,
     hotkey: String,
+    /// Enter-animation clock (`pill-in`, 260ms) — drives repaints through
+    /// the ticker instead of `with_animation`, which only queued a frame per
+    /// notify and rendered at ~5fps on this no-activate popup.
+    enter_at: std::time::Instant,
     /// Synthetic-wave clock for the Processing status (ticks at ~30fps only
     /// while the phase needs animation).
     processing_time: f32,
@@ -83,12 +87,18 @@ impl DictationPill {
     ) -> Self {
         let ticker = cx.spawn(async move |this, cx| loop {
             cx.background_executor()
-                .timer(std::time::Duration::from_millis(33))
+                .timer(std::time::Duration::from_millis(16))
                 .await;
             let alive = this.update(cx, |this, cx| {
-                if this.phase == PillPhase::Processing && this.delivery.is_none() {
-                    this.processing_time += 0.03;
-                    this.processing_blend = (this.processing_blend + 0.02).min(1.0);
+                let entering = this.enter_at.elapsed() < std::time::Duration::from_millis(320);
+                let processing = this.phase == PillPhase::Processing && this.delivery.is_none();
+                if processing {
+                    this.processing_time += 0.05;
+                    this.processing_blend = (this.processing_blend + 0.033).min(1.0);
+                }
+                // Enter animation + live waveform both repaint at tick rate;
+                // processing additionally advances its synthetic wave clock.
+                if entering || processing || this.phase == PillPhase::Recording {
                     cx.notify();
                 }
             });
@@ -102,6 +112,7 @@ impl DictationPill {
             delivery: None,
             levels: Vec::new(),
             hotkey,
+            enter_at: std::time::Instant::now(),
             processing_time: 0.0,
             last_active: Vec::new(),
             processing_blend: 0.0,
@@ -288,22 +299,22 @@ impl Render for DictationPill {
             );
 
         // Wrapper centers the animated body so the grow/shrink scales from
-        // the middle, like CSS `transform: scale()` on the Vue root.
+        // the middle, like CSS `transform: scale()` on the Vue root. The
+        // eased progress is clocked by `enter_at` — the ticker notifies at
+        // ~60fps during the first 320ms.
+        let enter_t = (self.enter_at.elapsed().as_secs_f32() / 0.26).min(1.0);
+        let eased = cubic_bezier(enter_t, 0.2, 0.7, 0.2, 1.4);
+        let scale = 0.96 + 0.04 * eased;
         div()
             .size_full()
             .flex()
             .items_center()
             .justify_center()
             .child(
-                pill_body.with_animation(
-                    "pill-in",
-                    Animation::new(std::time::Duration::from_millis(260))
-                        .with_easing(|t| cubic_bezier(t, 0.2, 0.7, 0.2, 1.4)),
-                    |el, t| {
-                        let s = 0.96 + 0.04 * t;
-                        el.w(px(PILL_W * s)).h(px(PILL_H * s)).opacity(t)
-                    },
-                ),
+                pill_body
+                    .w(px(PILL_W * scale))
+                    .h(px(PILL_H * scale))
+                    .opacity(eased),
             )
     }
 }
