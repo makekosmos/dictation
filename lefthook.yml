@@ -5,10 +5,10 @@ pre-commit:
   commands:
     lint:
       glob: "*.{ts,vue,mjs,js,json}"
-      run: bunx oxlint --no-error-on-unmatched-pattern {staged_files}
+      run: bun run lint -- --no-error-on-unmatched-pattern {staged_files}
     format:
       glob: "*.{ts,vue,mjs,js,json}"
-      run: bunx oxfmt --check {staged_files}
+      run: bun run format:check -- {staged_files}
     manifest:
       run: bun run check:manifest
 

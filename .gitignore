@@ -2,3 +2,5 @@ node_modules/
 dist/
 release/
 .tmp/
+worker/dictation-worker.exe
+gpui/target/

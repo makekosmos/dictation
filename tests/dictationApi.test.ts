@@ -12,6 +12,7 @@ const config = {
   model: "whisper-large-v3-turbo",
   localModelId: "small",
   providerEnabled: true,
+  autostart: false,
 };
 
 describe("Dictation Cortex contract", () => {
@@ -66,6 +67,7 @@ describe("Dictation Cortex contract", () => {
       "getConfig",
       "getState",
       "listLocalModels",
+      "setAutostart",
       "startRecording",
       "updateConfig",
     ]);
@@ -75,6 +77,7 @@ describe("Dictation Cortex contract", () => {
     await api.updateConfig({ ...config, apiKey: "secret" } as typeof config);
     await api.startRecording();
     await api.cancel();
+    await api.setAutostart(true);
     expect(calls).toEqual([
       "dictation.get_config",
       "dictation.get_state",
@@ -82,6 +85,7 @@ describe("Dictation Cortex contract", () => {
       "dictation.update_config",
       "dictation.start_recording",
       "dictation.cancel",
+      "dictation.lifecycle.set_autostart",
     ]);
     expect(params[3]).toEqual(config);
   });

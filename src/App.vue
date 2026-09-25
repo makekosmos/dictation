@@ -8,6 +8,7 @@ import {
   SettingsSidebarButton,
   SettingsTextInputRow,
   Skeleton,
+  type TitlebarPlatform,
 } from "@kosmos/visuals";
 import { Settings2 } from "@lucide/vue";
 import { computed, onMounted, ref } from "vue";
@@ -30,6 +31,7 @@ const fallback: Config = {
   model: "whisper-large-v3-turbo",
   localModelId: "small",
   providerEnabled: true,
+  autostart: false,
 };
 const config = ref<Config>({ ...fallback });
 const loading = ref(true);
@@ -82,6 +84,11 @@ const legacyBridge = window.kepler?.ark
   : undefined;
 const dictation = createDictationApi(window.kosmosApp?.ark ?? legacyBridge);
 
+const chromePlatform = computed<TitlebarPlatform | undefined>(() => {
+  const marker = document.documentElement.dataset.platform;
+  return marker === "mac" || marker === "windows" || marker === "linux" ? marker : undefined;
+});
+
 function requireDictation() {
   if (!dictation) throw new Error("Откройте Dictation из Kosmos");
   return dictation;
@@ -118,6 +125,7 @@ async function save() {
   message.value = "";
   try {
     await requireDictation().updateConfig(config.value);
+    await requireDictation().setAutostart(config.value.autostart);
     message.value = "Настройки сохранены";
   } catch (error) {
     message.value = error instanceof Error ? error.message : "Не удалось сохранить";
@@ -130,7 +138,7 @@ onMounted(load);
 </script>
 
 <template>
-  <DesktopChrome appearance="settings" platform="windows">
+  <DesktopChrome appearance="settings" :platform="chromePlatform">
     <template #sidebar>
       <SettingsSidebar title="Kosmos" background="var(--bg-app)">
         <div class="dictation-sidebar-scroll kosmos-scroll">
@@ -163,7 +171,7 @@ onMounted(load);
           <SettingsTextInputRow
             v-model="config.hotkey"
             title="Горячая клавиша"
-            description="Работает глобально, пока запущен Kosmos Desktop."
+            description="Работает глобально через Kosmos Engine."
             placeholder="Ctrl+Shift+;"
           />
           <SettingsTextInputRow
@@ -208,10 +216,17 @@ onMounted(load);
             title="Сохранить настройки"
             description="Новая горячая клавиша применяется сразу."
             button-label="Сохранить"
-            variant="surface"
+            variant="ghost"
             :loading="saving"
             @click="save"
           />
+          <label class="dictation-autostart">
+            <input v-model="config.autostart" type="checkbox" />
+            <span>
+              <strong>Запускать при входе в Windows</strong>
+              <small>Автозапуск настраивается через Kosmos Engine.</small>
+            </span>
+          </label>
         </SettingsList>
 
         <SettingsList>
@@ -223,14 +238,14 @@ onMounted(load);
                 : 'Добавьте ключ на странице «Ключи» в Kosmos Manager.'
             "
             button-label="В Kosmos Manager"
-            variant="surface"
+            variant="ghost"
             disabled
           />
           <SettingsButtonRow
             :title="providerLabel"
-            description="Микрофон, горячая клавиша и вставка текста выполняются Kosmos Desktop."
+            description="Микрофон, горячая клавиша и вставка текста выполняются Kosmos Engine."
             button-label="Активно"
-            variant="surface"
+            variant="ghost"
             disabled
             muted
           />

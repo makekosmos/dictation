@@ -31,6 +31,7 @@ export function collectPackageFiles(packageRoot) {
   addFile(path.join(packageRoot, "compatibility.json"), "compatibility.json");
   addFile(path.join(packageRoot, "icon.png"), "icon.png");
   addTree(path.join(packageRoot, "dist"), "dist");
+  addFile(path.join(packageRoot, "worker", "dictation-worker.exe"), "worker/dictation-worker.exe");
   return files;
 }
 

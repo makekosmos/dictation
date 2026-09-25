@@ -12,9 +12,7 @@
     "esModuleInterop": true,
     "types": ["bun-types", "vite/client"],
     "paths": {
-      "@/*": ["./src/*"],
-      "@kosmos/visuals": ["../imago/index.ts"],
-      "@kosmos/visuals/theme/css": ["../imago/theme/css-variables.css"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.vue", "tests/**/*.ts"]
