@@ -125,13 +125,22 @@ impl DictationApp {
     // --- Session state machine (Electron dictation-pill.ts parity) ----------
 
     /// Pill toggle — the status-window button, the pill's own Стоп button and
-    /// the Engine hotkey triggers all funnel here. Re-entry while
-    /// Starting/Processing is ignored.
+    /// the Engine hotkey triggers all funnel here. A new session preempts a
+    /// lingering Processing/delivery pill (Vue parity: `pillFinished` hides
+    /// instantly and the hotkey always works) — stale replies are dropped by
+    /// the session tag in `handle_reply`.
     pub fn dictation_toggle(&mut self, cx: &mut Context<Self>) {
         match self.phase {
             None => self.dictation_begin(cx),
             Some(PillPhase::Recording) => self.dictation_finish(cx),
-            Some(PillPhase::Starting | PillPhase::Processing) => {}
+            Some(PillPhase::Starting) => {}
+            Some(PillPhase::Processing) => {
+                self.phase = None;
+                self.delivery = None;
+                self.levels.clear();
+                self.close_pill(cx);
+                self.dictation_begin(cx);
+            }
         }
     }
 
@@ -167,9 +176,15 @@ impl DictationApp {
         self.phase = Some(PillPhase::Starting);
         self.push_pill(cx);
         self.send_command(Command::DictationStart {
-            slot: "dictation.pill.start".into(),
+            slot: self.pill_slot("start"),
         });
         cx.notify();
+    }
+
+    /// Replies carry the issuing session in the slot (`name@N`) — a session
+    /// preempted mid-flight must not clobber the new session's state.
+    fn pill_slot(&self, name: &str) -> String {
+        format!("dictation.pill.{name}@{}", self.session)
     }
 
     /// Recording → Processing: the pill STAYS open showing the processing
@@ -180,7 +195,7 @@ impl DictationApp {
         self.push_pill(cx);
         match self.capture.take() {
             Some(capture_id) => self.send_command(Command::DictationStop {
-                slot: "dictation.pill.stop".into(),
+                slot: self.pill_slot("stop"),
                 capture_id,
             }),
             None => self.send_command(Command::DictationCancel {
@@ -300,7 +315,33 @@ impl DictationApp {
     }
 
     fn handle_reply(&mut self, reply: crate::worker::Reply, cx: &mut Context<Self>) {
-        match reply.slot.as_str() {
+        // Sessioned ops carry `name@session`; replies from a preempted session
+        // must not mutate the new session's state. Only dictation.pill slots
+        // are tagged — "@action" is a slot name itself.
+        let (slot, tag) = match reply
+            .slot
+            .strip_prefix("dictation.pill.")
+            .and_then(|_| reply.slot.split_once('@'))
+        {
+            Some((name, n)) => (name.to_string(), n.parse::<u64>().ok()),
+            None => (reply.slot.clone(), None),
+        };
+        if slot.starts_with("dictation.pill.") && tag.is_some() && tag != Some(self.session) {
+            // Stale start reply leaves an orphaned Engine capture — cancel it.
+            if slot == "dictation.pill.start" {
+                let capture_id = reply.result.ok().and_then(|v| {
+                    v.get("captureId")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                });
+                self.send_command(Command::DictationCancel {
+                    slot: "dictation.pill.cancel".into(),
+                    capture_id,
+                });
+            }
+            return;
+        }
+        match slot.as_str() {
             "dictation.pill.start" => match reply.result {
                 Ok(v) => {
                     let capture_id = v
@@ -335,7 +376,7 @@ impl DictationApp {
                     self.last_duration_ms =
                         v.get("durationMs").and_then(Value::as_f64).unwrap_or(0.0);
                     self.send_command(Command::DictationTranscribe {
-                        slot: "dictation.pill.result".into(),
+                        slot: self.pill_slot("result"),
                         audio_b64,
                         duration_sec: self.last_duration_ms / 1000.0,
                     });

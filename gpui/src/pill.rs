@@ -175,8 +175,12 @@ impl Render for DictationPill {
             .filter(|p| !p.is_empty())
             .collect();
 
-        div()
-            .size_full()
+        // Vue `pill-in` parity: scale(0.96)+fade → scale(1) over 260ms on
+        // cubic-bezier(0.2, 0.7, 0.2, 1.4). The window is exactly pill-sized,
+        // so we animate the inner container's size instead of a transform.
+        let pill_body = div()
+            .w(px(PILL_W))
+            .h(px(PILL_H))
             .rounded(px(8.))
             .border_1()
             .border_color(fade(FG(), 0.18))
@@ -281,6 +285,52 @@ impl Render for DictationPill {
                                     )
                             }),
                     ),
+            );
+
+        // Wrapper centers the animated body so the grow/shrink scales from
+        // the middle, like CSS `transform: scale()` on the Vue root.
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                pill_body.with_animation(
+                    "pill-in",
+                    Animation::new(std::time::Duration::from_millis(260))
+                        .with_easing(|t| cubic_bezier(t, 0.2, 0.7, 0.2, 1.4)),
+                    |el, t| {
+                        let s = 0.96 + 0.04 * t;
+                        el.w(px(PILL_W * s)).h(px(PILL_H * s)).opacity(t)
+                    },
+                ),
             )
     }
+}
+
+/// CSS cubic-bezier(x1, y1, x2, y2) — Newton-solve x(u)=t, then y(u).
+/// Ported curve for the Vue `pill-in` keyframes.
+fn cubic_bezier(t: f32, _x1: f32, y1: f32, _x2: f32, y2: f32) -> f32 {
+    fn curve(a1: f32, a2: f32, u: f32) -> f32 {
+        let i = 1.0 - u;
+        3.0 * i * i * u * a1 + 3.0 * i * u * u * a2 + u * u * u
+    }
+    fn deriv(a1: f32, a2: f32, u: f32) -> f32 {
+        let i = 1.0 - u;
+        3.0 * i * i * a1 + 6.0 * i * u * (a2 - a1) + 3.0 * u * u * (1.0 - a2)
+    }
+    let (x1, x2) = (_x1, _x2);
+    let mut u = t;
+    for _ in 0..8 {
+        let x = curve(x1, x2, u) - t;
+        if x.abs() < 1e-4 {
+            break;
+        }
+        let d = deriv(x1, x2, u);
+        if d.abs() < 1e-6 {
+            break;
+        }
+        u = (u - x / d).clamp(0.0, 1.0);
+    }
+    curve(y1, y2, u)
 }
