@@ -35,6 +35,9 @@ pub struct DictationApp {
     status: Option<AnyWindowHandle>,
     /// Session phase shared by the pill and the status window.
     pub phase: Option<PillPhase>,
+    /// `dictation.begin_hotkey_capture` armed — hook intercepts the next
+    /// keystroke and emits `dictation_capture_key` / `_cancelled`.
+    pub hotkey_capturing: bool,
     /// `captureId` of the live `dictation.capture.start` session — ours or
     /// adopted from `dictation_audio_level` events when another client
     /// (e.g. the Cortex Manager record button) started the capture.
@@ -78,6 +81,7 @@ impl DictationApp {
             capture: None,
             last_duration_ms: 0.0,
             levels: VecDeque::new(),
+            hotkey_capturing: false,
             delivery: None,
             session: 0,
             delete_confirm: None,
@@ -145,6 +149,14 @@ impl DictationApp {
             Some(Slot::Ready(v)) => v.clone(),
             _ => Value::Null,
         }
+    }
+
+    /// Arm the Engine hotkey-capture mode (the next modifier+key press
+    /// becomes the new hotkey; Esc cancels).
+    pub fn hotkey_capture_start(&mut self, cx: &mut Context<Self>) {
+        self.hotkey_capturing = true;
+        self.action("dictation.begin_hotkey_capture", json!({}));
+        cx.notify();
     }
 
     // --- Session state machine (Electron dictation-pill.ts parity) ----------
@@ -540,6 +552,15 @@ impl DictationApp {
                     self.levels.push_back(level);
                 }
             }
+            "dictation_capture_key" if self.hotkey_capturing => {
+                self.hotkey_capturing = false;
+                if let Some(accel) = build_accelerator(&event) {
+                    self.action("dictation.update_config", json!({ "hotkey": accel }));
+                }
+            }
+            "dictation_capture_cancelled" => {
+                self.hotkey_capturing = false;
+            }
             "dictation_state_changed" | "dictation.state_changed" | "dictation_config_changed" => {
                 self.call("dictation.state", "dictation.get_state", json!({}));
             }
@@ -571,5 +592,58 @@ impl DictationApp {
 impl kosmos_gpui_kit::fields::Slots for DictationApp {
     fn slot(&self, key: &str) -> Option<&Slot> {
         self.slots.get(key)
+    }
+}
+
+/// vk + modifier flags → Electron-style accelerator ("Ctrl+Shift+;").
+/// Ported from `useDictationConfig.shared.ts` (vkToKeyName/buildAccelerator).
+fn build_accelerator(event: &Value) -> Option<String> {
+    let vk = event.get("vk").and_then(Value::as_u64)? as u32;
+    let key = vk_to_key_name(vk)?;
+    let mut parts = Vec::new();
+    for (flag, name) in [
+        ("ctrl", "Ctrl"),
+        ("alt", "Alt"),
+        ("shift", "Shift"),
+        ("win", "Super"),
+    ] {
+        if event.get(flag).and_then(Value::as_bool) == Some(true) {
+            parts.push(name.to_string());
+        }
+    }
+    parts.push(key);
+    Some(parts.join("+"))
+}
+
+fn vk_to_key_name(vk: u32) -> Option<String> {
+    match vk {
+        0x41..=0x5A | 0x30..=0x39 => char::from_u32(vk).map(|c| c.to_string()),
+        0x70..=0x87 => Some(format!("F{}", vk - 0x6f)),
+        0xBA => Some(";".into()),
+        0xBB => Some("+".into()),
+        0xBC => Some(",".into()),
+        0xBD => Some("-".into()),
+        0xBE => Some(".".into()),
+        0xBF => Some("/".into()),
+        0xC0 => Some("`".into()),
+        0xDB => Some("[".into()),
+        0xDC => Some("\\".into()),
+        0xDD => Some("]".into()),
+        0xDE => Some("'".into()),
+        0x08 => Some("Backspace".into()),
+        0x09 => Some("Tab".into()),
+        0x0D => Some("Enter".into()),
+        0x20 => Some("Space".into()),
+        0x21 => Some("PageUp".into()),
+        0x22 => Some("PageDown".into()),
+        0x23 => Some("End".into()),
+        0x24 => Some("Home".into()),
+        0x25 => Some("Left".into()),
+        0x26 => Some("Up".into()),
+        0x27 => Some("Right".into()),
+        0x28 => Some("Down".into()),
+        0x2D => Some("Insert".into()),
+        0x2E => Some("Delete".into()),
+        _ => None,
     }
 }

@@ -161,6 +161,29 @@ impl Render for DictationApp {
             ));
             card_el = card_el.child(kv("Модель", vstr(cfg, "model")));
             card_el = card_el.child(kv("Вставка", vstr(cfg, "injectMode")));
+            card_el = card_el.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(kv("Хоткей", vstr(cfg, "hotkey")))
+                    .child(if self.hotkey_capturing {
+                        div()
+                            .text_size(px(11.))
+                            .text_color(c(WARN()))
+                            .child("Нажмите комбинацию… (Esc — отмена)")
+                            .into_any_element()
+                    } else {
+                        btn(
+                            "dict-hotkey-capture",
+                            "Изменить",
+                            false,
+                            cx,
+                            |this, cx| this.hotkey_capture_start(cx),
+                        )
+                        .into_any_element()
+                    }),
+            );
             if let Some(err) = vopt(&state, "lastError") {
                 card_el = card_el.child(kv("Последняя ошибка", err));
             }
@@ -285,9 +308,6 @@ fn models_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyEle
         if let Some(model) = vopt(&local, "loadedModel") {
             el = el.child(kv("Загружена", model));
         }
-        if let Some(err) = vopt(&local, "error") {
-            el = el.child(kv("Ошибка движка", err));
-        }
     }
     for model in varr(&models, "models").iter().take(10) {
         let id = vstr(model, "id");
@@ -297,8 +317,7 @@ fn models_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyEle
         let mut r = row(
             vstr(model, "name"),
             format!(
-                "{} · {:.0} МБ{}",
-                vstr(model, "description"),
+                "{:.0} МБ{}",
                 vnum(model, "sizeMb"),
                 if vbool(model, "recommended") {
                     " · рекомендуется"
