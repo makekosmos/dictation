@@ -17,6 +17,11 @@ pub use kosmos_gpui_kit::fields::Slot;
 pub struct DictationApp {
     worker: Worker,
     pub slots: HashMap<String, Slot>,
+    /// slot → (op, params) for every `call`/`action` — lets `drain` retry
+    /// slots that failed while Engine was down (they'd otherwise stay
+    /// Failed forever: nothing else reissues them).
+    ops: HashMap<String, (&'static str, Value)>,
+    drain_ticks: u32,
     /// Persistent Engine error (banner until a retry succeeds).
     pub error: Option<String>,
     /// Transient success line; cleared on the next action.
@@ -62,6 +67,8 @@ impl DictationApp {
         let mut this = Self {
             worker: Worker::start(data_dir),
             slots: HashMap::new(),
+            ops: HashMap::new(),
+            drain_ticks: 0,
             error: None,
             notice: None,
             worker_dead: false,
@@ -115,6 +122,10 @@ impl DictationApp {
     /// Queue an Engine op into a named slot; the reply overwrites it.
     pub fn call(&mut self, slot: impl Into<String>, op: &'static str, params: Value) {
         let slot = slot.into();
+        // "@action" replies are one-shot writes — never auto-retry them.
+        if slot != "@action" {
+            self.ops.insert(slot.clone(), (op, params.clone()));
+        }
         self.slots.insert(slot.clone(), Slot::Loading);
         self.send_command(Command::Rpc { slot, op, params });
     }
@@ -304,6 +315,17 @@ impl DictationApp {
         if crate::SHOW_REQUESTED.swap(false, std::sync::atomic::Ordering::SeqCst) {
             if let Some(h) = self.status {
                 let _ = h.update(cx, |_, window, _| window.activate_window());
+            }
+        }
+        // ~2s: retry slots whose op failed or never landed (Engine offline at
+        // launch, restart swap). Without this they stay empty forever.
+        self.drain_ticks += 1;
+        if self.drain_ticks.is_multiple_of(66) {
+            for (slot, (op, params)) in self.ops.clone() {
+                if !matches!(self.slots.get(&slot), Some(Slot::Ready(_))) {
+                    self.slots.insert(slot.clone(), Slot::Loading);
+                    self.send_command(Command::Rpc { slot, op, params });
+                }
             }
         }
 

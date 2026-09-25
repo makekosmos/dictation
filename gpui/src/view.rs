@@ -34,7 +34,9 @@ impl Render for DictationApp {
         let hotkey = vstr(cfg, "hotkey");
 
         let mut col = div()
-            .size_full()
+            .flex_1()
+            .w_full()
+            .min_h_0()
             .bg(c(BG()))
             .text_color(c(FG()))
             .font_family("Inter")
@@ -52,37 +54,20 @@ impl Render for DictationApp {
                 .justify_between()
                 .child(
                     div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .text_size(px(15.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child("Kosmos Dictation"),
+                        .text_size(px(12.))
+                        .text_color(c(MUTED_FG()))
+                        .child("Статус движка"),
                 )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child({
-                            let s = vstr(&state, "state");
-                            let color = match s.as_str() {
-                                "recording" => DESTRUCTIVE(),
-                                "transcribing" | "waiting" => WARN(),
-                                "error" => DESTRUCTIVE(),
-                                _ => SUCCESS(),
-                            };
-                            badge(state_label(&s), color)
-                        })
-                        // Window controls (no native titlebar): – hides the
-                        // window (dictation keeps running), × quits the app.
-                        .child(titlebar_btn("–").on_click(cx.listener(|_, _, window, _| {
-                            window.minimize_window();
-                        })))
-                        .child(titlebar_btn("×").on_click(cx.listener(|_, _, _, cx| {
-                            cx.quit();
-                        }))),
-                ),
+                .child({
+                    let s = vstr(&state, "state");
+                    let color = match s.as_str() {
+                        "recording" => DESTRUCTIVE(),
+                        "transcribing" | "waiting" => WARN(),
+                        "error" => DESTRUCTIVE(),
+                        _ => SUCCESS(),
+                    };
+                    badge(state_label(&s), color)
+                }),
         );
 
         if let Some(error) = &self.error {
@@ -230,7 +215,45 @@ impl Render for DictationApp {
         // --- Локальные модели ---
         col = col.child(models_card(self, cx));
 
-        col
+        // Native-feel titlebar (Agenda pattern): the strip is a
+        // WindowControlArea::Drag region (HTCAPTION → native move/snap), the
+        // trailing controls are platform hitboxes — Windows handles press,
+        // snap flyout and the close button; our should-close hook turns it
+        // into minimize so dictation keeps running.
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(c(BG()))
+            .child(
+                div()
+                    .h(px(30.))
+                    .w_full()
+                    .flex_none()
+                    .flex()
+                    .border_b_1()
+                    .border_color(fade(FG(), 0.10))
+                    .child(
+                        div()
+                            .id("titlebar-drag")
+                            .flex_1()
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .px_3()
+                            .window_control_area(WindowControlArea::Drag)
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(fade(FG(), 0.9))
+                                    .child("Kosmos Dictation"),
+                            ),
+                    )
+                    .child(caption_btn("–", WindowControlArea::Min, false))
+                    .child(caption_btn("×", WindowControlArea::Close, true)),
+            )
+            .child(col)
     }
 }
 
@@ -357,18 +380,25 @@ fn models_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyEle
     el.into_any_element()
 }
 
-/// Small square window-control button for the titlebar-less header.
-fn titlebar_btn(label: &'static str) -> Stateful<Div> {
+/// Native caption button: the platform hit-tests the WindowControlArea, we
+/// only draw the glyph + hover state (Windows convention 46px wide).
+fn caption_btn(label: &'static str, area: WindowControlArea, danger: bool) -> Stateful<Div> {
     div()
-        .id(SharedString::from(format!("tb-{label}")))
-        .w(px(22.))
-        .h(px(22.))
-        .rounded(px(4.))
+        .id(SharedString::from(format!("cap-{area:?}")))
+        .w(px(46.))
+        .h_full()
         .flex()
         .items_center()
         .justify_center()
-        .text_size(px(12.))
-        .text_color(fade(FG(), 0.6))
-        .hover(|el| el.bg(fade(FG(), 0.1)).text_color(c(FG())))
+        .text_size(px(11.))
+        .text_color(fade(FG(), 0.75))
+        .window_control_area(area)
+        .hover(move |el| {
+            if danger {
+                el.bg(fade(0xe81123, 1.0)).text_color(fade(0xffffff, 1.0))
+            } else {
+                el.bg(fade(FG(), 0.10))
+            }
+        })
         .child(label)
 }
