@@ -3,3 +3,4 @@ dist/
 release/
 .tmp/
 worker/dictation-worker.exe
+gpui/target/
