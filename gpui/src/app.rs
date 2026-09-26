@@ -338,10 +338,15 @@ impl DictationApp {
     }
 
     /// Toggle the HKCU Run entry — `--background` starts the app silently
-    /// (no window) at Windows sign-in.
+    /// (no window) at Windows sign-in. Enabling also registers Engine
+    /// (`engine.autostart.set` → `kepler-backend --start`): dictation at
+    /// sign-in is useless without Engine up.
     pub fn set_autostart(&mut self, on: bool, cx: &mut Context<Self>) {
         if crate::set_autostart(on) {
             self.autostart = on;
+            if on {
+                self.action("engine.autostart.set", json!({ "enabled": true }));
+            }
             cx.notify();
         }
     }
