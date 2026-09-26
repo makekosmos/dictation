@@ -184,6 +184,50 @@ impl Render for DictationApp {
                         .into_any_element()
                     }),
             );
+            // Idle unload: number → minutes, null/0 → "Не выгружать".
+            let unload_ms = vnum(cfg, "localIdleUnloadMs");
+            let current_min = if unload_ms <= 0.0 {
+                None
+            } else {
+                Some((unload_ms / 60_000.0).round() as u64)
+            };
+            let mut unload_row = div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(kv("Выгрузка модели", "после простоя"));
+            let mut opts = div().flex().items_center().gap_1();
+            for (label, mins) in [
+                ("5 мин", Some(5u64)),
+                ("10 мин", Some(10)),
+                ("30 мин", Some(30)),
+                ("∞", None),
+            ] {
+                let selected = mins == current_min;
+                opts = opts.child(
+                    seg_opt(&format!("unload-{label}"), label, selected).on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            this.set_idle_unload_min(mins);
+                            cx.notify();
+                        },
+                    )),
+                );
+            }
+            unload_row = unload_row.child(opts);
+            card_el = card_el.child(unload_row);
+            card_el = card_el.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(kv("Автозапуск", "с входом в Windows"))
+                    .child(toggle(
+                        "dict-autostart",
+                        self.autostart(),
+                        cx,
+                        |this, on, cx| this.set_autostart(on, cx),
+                    )),
+            );
             if let Some(err) = vopt(&state, "lastError") {
                 card_el = card_el.child(kv("Последняя ошибка", err));
             }
@@ -420,4 +464,24 @@ fn caption_btn(label: &'static str, area: WindowControlArea, danger: bool) -> St
             }
         })
         .child(label)
+}
+
+/// Segmented-option chip (idle-unload selector) — small clickable token,
+/// highlighted when `selected`.
+fn seg_opt(id: &str, label: &'static str, selected: bool) -> Stateful<Div> {
+    let el = div()
+        .id(SharedString::from(id.to_string()))
+        .px(px(7.))
+        .py(px(2.))
+        .rounded(px(4.))
+        .text_size(px(11.))
+        .cursor_pointer()
+        .child(label);
+    if selected {
+        el.bg(c(ACCENT())).text_color(c(BG()))
+    } else {
+        el.bg(fade(FG(), 0.08))
+            .text_color(fade(FG(), 0.75))
+            .hover(|s| s.bg(fade(FG(), 0.14)))
+    }
 }

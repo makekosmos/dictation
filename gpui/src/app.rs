@@ -31,8 +31,11 @@ pub struct DictationApp {
     /// Dictation pill overlay window while a recording session is active.
     pub pill: Option<WindowHandle<DictationPill>>,
     /// Status window handle — minimized instead of closed (the worker/Engine
-    /// subscription lives on this entity, so the window must not die).
+    /// subscription lives on this entity, so the window must not die). `None`
+    /// in `--background` (autostart) mode until the window is requested.
     status: Option<AnyWindowHandle>,
+    /// HKCU Run entry `KosmosDictation` present → launch at Windows sign-in.
+    autostart: bool,
     /// Session phase shared by the pill and the status window.
     pub phase: Option<PillPhase>,
     /// `dictation.begin_hotkey_capture` armed — hook intercepts the next
@@ -57,16 +60,15 @@ pub struct DictationApp {
 }
 
 impl DictationApp {
+    /// In `--background` (autostart) mode the window is created hidden
+    /// (`show: false`) — same entity, nothing on screen.
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let data_dir = kosmos_gpui_kit::engine::data_dir().ok();
         // Closing the only window would drop this entity — the worker, the
         // Engine subscription and the hotkey flow with it. Intercept close:
         // minimize instead (same affordance as tray apps — dictation keeps
         // working, the window is gone from view).
-        window.on_window_should_close(cx, |window, _cx| {
-            window.minimize_window();
-            false
-        });
+        install_should_close(window, cx);
         let mut this = Self {
             worker: Worker::start(data_dir),
             slots: HashMap::new(),
@@ -77,6 +79,7 @@ impl DictationApp {
             worker_dead: false,
             pill: None,
             status: Some(window.window_handle()),
+            autostart: crate::autostart_enabled(),
             phase: None,
             capture: None,
             last_duration_ms: 0.0,
@@ -320,13 +323,36 @@ impl DictationApp {
         }
     }
 
+    /// Idle-unload selector for the local STT model: minutes → ms, `None` =
+    /// never unload (`localIdleUnloadMs: null` in the Engine config patch).
+    pub fn set_idle_unload_min(&mut self, minutes: Option<u64>) {
+        let ms = minutes.map_or(Value::Null, |m| json!(m * 60_000));
+        self.action(
+            "dictation.update_config",
+            json!({ "localIdleUnloadMs": ms }),
+        );
+    }
+
+    pub fn autostart(&self) -> bool {
+        self.autostart
+    }
+
+    /// Toggle the HKCU Run entry — `--background` starts the app silently
+    /// (no window) at Windows sign-in.
+    pub fn set_autostart(&mut self, on: bool, cx: &mut Context<Self>) {
+        if crate::set_autostart(on) {
+            self.autostart = on;
+            cx.notify();
+        }
+    }
+
     // --- Worker drain --------------------------------------------------------
 
     fn drain(&mut self, cx: &mut Context<Self>) {
-        // Second-launch wake: resurface the (possibly minimized) window.
+        // Second-launch wake: resurface the (possibly minimized/hidden) window.
         if crate::SHOW_REQUESTED.swap(false, std::sync::atomic::Ordering::SeqCst) {
             if let Some(h) = self.status {
-                let _ = h.update(cx, |_, window, _| window.activate_window());
+                let _ = h.update(cx, |_, window, _| show_and_activate(window));
             }
         }
         // ~2s: retry slots whose op failed or never landed (Engine offline at
@@ -586,6 +612,33 @@ impl DictationApp {
             _ => {}
         }
     }
+}
+
+/// Unhide a `show: false` / minimized window, then activate it. GPUI's
+/// `activate_window` only handles IsIconic→SW_RESTORE; a window that was
+/// never shown needs an explicit SW_SHOW first.
+fn show_and_activate(window: &mut Window) {
+    #[cfg(windows)]
+    if let Ok(wh) = raw_window_handle::HasWindowHandle::window_handle(window) {
+        use raw_window_handle::RawWindowHandle;
+        if let RawWindowHandle::Win32(w32) = wh.as_raw() {
+            unsafe {
+                use windows_sys::Win32::UI::WindowsAndMessaging::*;
+                ShowWindow(w32.hwnd.get() as _, SW_SHOW);
+            }
+        }
+    }
+    window.activate_window();
+}
+
+/// Close-intercept for the status window: minimize instead of close so the
+/// entity
+/// (worker + Engine subscription) keeps the dictation flow alive.
+fn install_should_close(window: &mut Window, cx: &App) {
+    window.on_window_should_close(cx, |window, _cx| {
+        window.minimize_window();
+        false
+    });
 }
 
 /// Exposes the named data slots to `kosmos_gpui_kit::fields::slot_or`.

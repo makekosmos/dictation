@@ -91,12 +91,16 @@ fn main() {
     if !claim_single_instance() {
         return;
     }
+    // `--background` = the autostart entry point: the entity runs without a
+    // window (hotkey + pill keep working); a second launch resurfaces the
+    // status window via the SHOW_REQUESTED event.
+    let background = std::env::args().any(|arg| arg == "--background");
     // Explicit: the pill is a transient overlay and the status window may be
     // minimized/closed-adjacent — dictation keeps working without any window.
     gpui::application()
         .with_quit_mode(gpui::QuitMode::Explicit)
         .with_assets(assets::Assets)
-        .run(|cx: &mut App| {
+        .run(move |cx: &mut App| {
             gpui_component::init(cx);
             cx.text_system()
                 .add_fonts(imago_gpui::assets::font_bytes())
@@ -111,6 +115,11 @@ fn main() {
                         appears_transparent: true,
                         traffic_light_position: Some(gpui::point(px(12.), px(14.))),
                     }),
+                    // `--background` (autostart): create hidden — dictation
+                    // works, nothing is shown until a second launch resurfaces
+                    // the window via the SHOW_REQUESTED event.
+                    show: !background,
+                    focus: !background,
                     ..Default::default()
                 },
                 |window, cx| {
@@ -119,10 +128,102 @@ fn main() {
                 },
             )
             .unwrap();
-            if std::env::var("DICTATION_GPUI_OFFSCREEN").is_err() {
+            if !background && std::env::var("DICTATION_GPUI_OFFSCREEN").is_err() {
                 cx.activate(true);
             }
         });
+}
+
+// --- Windows autostart (HKCU\...\Run\KosmosDictation) -------------------------
+
+const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const RUN_VALUE: &str = "KosmosDictation";
+
+/// Whether the Run entry exists (any value — we don't police the path).
+#[cfg(windows)]
+pub(crate) fn autostart_enabled() -> bool {
+    use windows_sys::Win32::System::Registry::*;
+    let key: Vec<u16> = RUN_KEY.encode_utf16().chain([0]).collect();
+    let name: Vec<u16> = RUN_VALUE.encode_utf16().chain([0]).collect();
+    unsafe {
+        let mut hkey = std::ptr::null_mut();
+        if RegOpenKeyExW(
+            windows_sys::Win32::System::Registry::HKEY_CURRENT_USER,
+            key.as_ptr(),
+            0,
+            KEY_READ,
+            &mut hkey,
+        ) != 0
+        {
+            return false;
+        }
+        let exists = RegQueryValueExW(
+            hkey,
+            name.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        ) == 0;
+        RegCloseKey(hkey);
+        exists
+    }
+}
+
+/// Write/remove `"<exe>" --background` under HKCU Run. Returns success.
+#[cfg(windows)]
+pub(crate) fn set_autostart(on: bool) -> bool {
+    use windows_sys::Win32::System::Registry::*;
+    let key: Vec<u16> = RUN_KEY.encode_utf16().chain([0]).collect();
+    let name: Vec<u16> = RUN_VALUE.encode_utf16().chain([0]).collect();
+    unsafe {
+        let mut hkey = std::ptr::null_mut();
+        if RegOpenKeyExW(
+            windows_sys::Win32::System::Registry::HKEY_CURRENT_USER,
+            key.as_ptr(),
+            0,
+            KEY_SET_VALUE,
+            &mut hkey,
+        ) != 0
+        {
+            return false;
+        }
+        let ok = if on {
+            let exe = match std::env::current_exe() {
+                Ok(p) => p,
+                Err(_) => {
+                    RegCloseKey(hkey);
+                    return false;
+                }
+            };
+            let value: Vec<u16> = format!("\"{}\" --background", exe.display())
+                .encode_utf16()
+                .chain([0])
+                .collect();
+            RegSetValueExW(
+                hkey,
+                name.as_ptr(),
+                0,
+                REG_SZ,
+                value.as_ptr().cast(),
+                (value.len() * 2) as u32,
+            ) == 0
+        } else {
+            RegDeleteValueW(hkey, name.as_ptr()) == 0
+        };
+        RegCloseKey(hkey);
+        ok
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn autostart_enabled() -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub(crate) fn set_autostart(_on: bool) -> bool {
+    false
 }
 
 #[allow(dead_code)]

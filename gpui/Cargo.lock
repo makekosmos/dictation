@@ -1373,6 +1373,7 @@ dependencies = [
  "gpui-kit",
  "imago-gpui",
  "kosmos-gpui-kit",
+ "raw-window-handle",
  "serde_json",
  "windows-sys 0.61.2",
 ]
