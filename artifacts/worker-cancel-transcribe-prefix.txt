@@ -1,0 +1,30 @@
+
+ RUN  v4.1.11 /tmp
+
+stdout | repro-f.test.ts > repro: stale finishCapture after cancel+retrigger > must not insert session-1 text into session-2's window
+insert_text calls: [{"method":"worker.call","id":"8","generation":1,"token":"t","operation":"ark.write","params":{"operation":"dictation.input.insert_text","params":{"text":"устаревший текст","targetWindow":"w2"}}}]
+error events: []
+
+ ❯ repro-f.test.ts (1 test | 1 failed) 13ms
+     × must not insert session-1 text into session-2's window 11ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  17:17:23
+   Duration  282ms (transform 43ms, setup 0ms, import 57ms, tests 13ms, environment 0ms)
+
+
+ RUN  v4.1.11 /tmp
+
+stdout | repro-f2.test.ts > repro: cancel during transcribe reports a bogus error > cancelled session must finish silently
+error events: [{"method":"worker.event","event":"dictation.error","data":{"code":"window-id-missing","retryable":true}}]
+i2 reply: [{"method":"worker.result","id":"i2","ok":false,"result":null,"error":"window-id-missing"}]
+
+ ❯ repro-f2.test.ts (1 test | 1 failed) 12ms
+     × cancelled session must finish silently 11ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  17:17:24
+   Duration  283ms (transform 41ms, setup 0ms, import 57ms, tests 12ms, environment 0ms)
+

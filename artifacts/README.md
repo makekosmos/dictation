@@ -1,3 +1,62 @@
+# KOS-193 reproduction artifacts (second pass — prepended)
+
+Independent reproductions captured BEFORE the fixes on `kos-193`. Base
+included all merged kos-172 fixes; these are NEW bugs.
+
+## W1 — Stale `finishCapture` continuation (`worker/worker.ts`)
+
+`worker-cancel-transcribe-prefix.txt` — two vitest reproductions, both fail
+pre-fix:
+
+1. Cancel while `speech.transcribe` is in flight → re-trigger a new session →
+   the stale continuation then emits `dictation.input.insert_text` with
+   session-1's text aimed at **session-2's** `targetWindow` ("w2"), then wipes
+   session-2's `captureId`/`windowId` and forces state idle while the Engine
+   still records capture-2 (cross-session contamination + bricked session).
+2. Same setup without re-trigger → the stale continuation throws
+   `window-id-missing` → a `dictation.error` event + `ok:false` invoke reply
+   for a cancel the USER asked for.
+
+Fix: after every `await` inside `finishCapture`, bail when
+`this.captureId !== captureId` — cancel() cleared it, or a newer session owns
+the slot.
+
+## G1 — `dictation_ptt_trigger` ignores `phase` (`gpui/src/app.rs`)
+
+`gpui-ptt-sim.rs` + `gpui-ptt-sim.txt` — standalone rustc simulation of the
+routing (the crate can't build here: deps require rustc 1.87, env has 1.85;
+see kos-172's note about the shader-artifact build-script failure too).
+Both PTT phases were routed into `dictation_toggle`. Shown in the sim:
+
+- bare `up` while idle → starts capture (release after pill Отмена, or key
+  held at app launch, immediately re-arms/arms recording),
+- `up` during Starting → dropped → capture lands in Recording with the key
+  released — records forever,
+- repeat `down` while Recording → premature finish,
+- `up` while Processing → preempts into a brand-new capture.
+
+Fix: phase-aware routing + `finish_after_start` (worker.ts `stopAfterStart`
+parity).
+
+## G2 — `hotkey_capturing` stuck on failed arm (`gpui/src/app.rs`)
+
+Same sim file, second section: `dictation.begin_hotkey_capture` was sent via
+the anonymous "@action" slot; on Err the flag stayed true and only the
+`dictation_capture_key`/`_cancelled` WS events could clear it — they never
+arrive after a failed arm, so the status window shows "Нажмите комбинацию…"
+until restart. Fix: dedicated `dictation.hotkey_capture` slot whose Err reply
+clears the flag; dead-channel send clears it immediately.
+
+## V1 — Save after failed load overwrites Engine config (`src/App.vue`)
+
+`settings-save-prefix.txt` — house-style source-assertion test failing
+pre-fix. On `get_config` failure the form keeps hardcoded fallbacks and
+`save()` would POST them over the user's real config (incl.
+`autostart:false`). Fix: `settingsLoaded` gate — save disabled + refused
+until a config actually landed.
+
+---
+
 # KOS-172 reproduction artifacts
 
 Independent reproductions captured BEFORE the fixes on `kos-172`.

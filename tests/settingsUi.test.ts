@@ -22,4 +22,13 @@ describe("Dictation settings surface", () => {
     expect(read("src/assets/providers/kosmos.svg")).toContain('fill="#fff"');
     expect(read("src/assets/providers/groq.svg")).toContain('fill="currentColor"');
   });
+
+  it("refuses to save settings the app never loaded", () => {
+    // If get_config fails the form keeps the hardcoded fallback — saving it
+    // would overwrite the user's real Engine config with defaults.
+    const app = read("src/App.vue");
+    expect(app).toContain("settingsLoaded");
+    expect(app).toContain(':disabled="!settingsLoaded"');
+    expect(app).toMatch(/if \(!settingsLoaded\.value\)/);
+  });
 });
