@@ -45,17 +45,24 @@ pub(crate) static SHOW_REQUESTED: AtomicBool = AtomicBool::new(false);
 fn claim_single_instance() -> bool {
     use std::sync::atomic::Ordering;
     use windows_sys::Win32::{
-        Foundation::{GetLastError, ERROR_ALREADY_EXISTS},
+        Foundation::{GetLastError, SetLastError, ERROR_ALREADY_EXISTS},
         System::Threading::{CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject},
     };
     let mutex_name: Vec<u16> = "Local\\KosmosDictationGpui\0".encode_utf16().collect();
     let event_name: Vec<u16> = "Local\\KosmosDictationGpuiShow\0".encode_utf16().collect();
+    // Clear last-error first: CreateMutexW only sets it when the mutex
+    // already exists, so a stale ERROR_ALREADY_EXISTS left by an earlier
+    // unrelated call would wrongly exit the first instance.
+    unsafe { SetLastError(0) };
     let handle = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr()) };
     if handle.is_null() {
         return true; // fail-open: running beats not running
     }
+    // GetLastError must be read before the next Win32 call — CreateEventW
+    // would overwrite it.
+    let already_exists = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
     let event = unsafe { CreateEventW(std::ptr::null(), 0, 0, event_name.as_ptr()) };
-    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+    if already_exists {
         if !event.is_null() {
             unsafe { SetEvent(event) };
         }
