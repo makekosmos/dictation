@@ -4,7 +4,8 @@ Independent reproductions captured BEFORE the fixes on `kos-247`. Base
 included all merged kos-172 + kos-193 + kos-220 + kos-237 fixes; these are
 NEW bugs. `cargo check`/`test`/`clippy` now run on Linux with the
 ~/.rustup 1.95.0 toolchain (`RUST_FONTCONFIG_DLOPEN=1`), so the new
-`#[test]`s in app.rs are real gate coverage, not just sims.
+`#[test]`s in app.rs are real test coverage, not just sims — note cargo
+is not wired into `bun run check` or CI, so they only run via `cargo test`.
 
 ## A1 — `@action` success leaves the stale error banner (`gpui/src/app.rs`)
 
