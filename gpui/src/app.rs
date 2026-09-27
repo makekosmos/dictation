@@ -45,6 +45,11 @@ pub struct DictationApp {
     /// adopted from `dictation_audio_level` events when another client
     /// (e.g. the Cortex Manager record button) started the capture.
     capture: Option<String>,
+    /// `capture` came from an `dictation_audio_level` broadcast, not our own
+    /// `capture.start` reply — adopted sessions get no reply to reconcile
+    /// against, so a non-recording `dictation_state_changed` broadcast is
+    /// their only "ended" signal and must retire the pill.
+    capture_adopted: bool,
     /// A `dictation_ptt_trigger` `up` that landed while `capture.start` was
     /// in flight — the session is finished the moment its reply arrives
     /// (worker.ts `stopAfterStart` parity).
@@ -86,6 +91,7 @@ impl DictationApp {
             autostart: crate::autostart_enabled(),
             phase: None,
             capture: None,
+            capture_adopted: false,
             finish_after_start: false,
             last_duration_ms: 0.0,
             levels: VecDeque::new(),
@@ -216,6 +222,7 @@ impl DictationApp {
         self.finish_after_start = false;
         self.session += 1;
         let capture_id = self.capture.take();
+        self.capture_adopted = false;
         self.send_command(Command::DictationCancel {
             slot: "dictation.pill.cancel".into(),
             capture_id,
@@ -230,6 +237,7 @@ impl DictationApp {
         self.session += 1;
         self.delivery = None;
         self.finish_after_start = false;
+        self.capture_adopted = false;
         // Fixed-width history from frame one: without it the first samples
         // remap every bar slot as the buffer grows ("bars squeeze in").
         self.levels = vec![0.0; 120].into();
@@ -266,6 +274,7 @@ impl DictationApp {
     fn dictation_finish(&mut self, cx: &mut Context<Self>) {
         self.phase = Some(PillPhase::Processing);
         self.push_pill(cx);
+        self.capture_adopted = false;
         match self.capture.take() {
             Some(capture_id) => {
                 // A dead worker channel must not freeze the pill on
@@ -315,18 +324,27 @@ impl DictationApp {
 
     /// Push the session snapshot into the pill entity. The pill renders ONLY
     /// its own fields — `cx.open_window` draws synchronously, and that first
-    /// draw would re-enter the `DictationApp` update that opened it.
-    fn push_pill(&self, cx: &mut Context<Self>) {
-        if let Some(handle) = &self.pill {
-            let phase = self.phase.unwrap_or(PillPhase::Starting);
-            let delivery = self.delivery;
-            let levels = self.levels.iter().copied().collect::<Vec<f32>>();
-            let hotkey = self.dictation_hotkey();
-            handle
-                .update(cx, |pill, _, cx| {
-                    pill.set_state(phase, delivery, levels, hotkey, cx)
-                })
-                .ok();
+    /// draw would re-enter the `DictationApp` update that opened it. A failed
+    /// update means the window died behind our back (compositor/session
+    /// teardown) — drop the stale handle or every later session reuses it
+    /// and runs with no overlay at all.
+    fn push_pill(&mut self, cx: &mut Context<Self>) {
+        let stale = match &self.pill {
+            Some(handle) => {
+                let phase = self.phase.unwrap_or(PillPhase::Starting);
+                let delivery = self.delivery;
+                let levels = self.levels.iter().copied().collect::<Vec<f32>>();
+                let hotkey = self.dictation_hotkey();
+                handle
+                    .update(cx, |pill, _, cx| {
+                        pill.set_state(phase, delivery, levels, hotkey, cx)
+                    })
+                    .is_err()
+            }
+            None => false,
+        };
+        if stale {
+            self.pill = None;
         }
     }
 
@@ -395,8 +413,12 @@ impl DictationApp {
             if on {
                 self.action("engine.autostart.set", json!({ "enabled": true }));
             }
-            cx.notify();
+        } else {
+            // Registry write failed — surface it instead of silently snapping
+            // the toggle back with zero feedback.
+            self.error = Some("Не удалось обновить автозапуск.".into());
         }
+        cx.notify();
     }
 
     // --- Worker drain --------------------------------------------------------
@@ -463,17 +485,23 @@ impl DictationApp {
             None => (reply.slot.clone(), None),
         };
         if slot.starts_with("dictation.pill.") && tag.is_some() && tag != Some(self.session) {
-            // Stale start reply leaves an orphaned Engine capture — cancel it.
+            // Stale start reply leaves an orphaned Engine capture — stop it by
+            // id. Not `dictation.cancel`: that op is an Engine-global reset —
+            // it clears another client's one-shot inject token
+            // (contract_window_id), drops prev_hwnd and cancels the local STT
+            // sidecar, and an errored stale start created nothing to clean.
+            // The orphan's own capture.stop already returns Engine to idle.
             if slot == "dictation.pill.start" {
-                let capture_id = reply.result.ok().and_then(|v| {
+                if let Some(capture_id) = reply.result.ok().and_then(|v| {
                     v.get("captureId")
                         .and_then(Value::as_str)
                         .map(str::to_string)
-                });
-                self.send_command(Command::DictationCancel {
-                    slot: "dictation.pill.cancel".into(),
-                    capture_id,
-                });
+                }) {
+                    self.send_command(Command::DictationStop {
+                        slot: "dictation.pill.orphan_stop".into(),
+                        capture_id,
+                    });
+                }
             }
             return;
         }
@@ -493,6 +521,7 @@ impl DictationApp {
                         });
                     } else if let Some(id) = capture_id {
                         self.capture = Some(id);
+                        self.capture_adopted = false;
                         self.phase = Some(PillPhase::Recording);
                         if self.finish_after_start {
                             // The PTT key was released while capture.start
@@ -519,6 +548,7 @@ impl DictationApp {
                         Some("") => {
                             self.phase = None;
                             self.delivery = None;
+                            self.capture_adopted = false;
                             self.close_pill(cx);
                             cx.notify();
                         }
@@ -548,6 +578,7 @@ impl DictationApp {
                     if v.get("cancelled").and_then(Value::as_bool) == Some(true) {
                         self.phase = None;
                         self.delivery = None;
+                        self.capture_adopted = false;
                         self.close_pill(cx);
                     } else {
                         self.delivery = Some(Self::pill_delivery_of(&v));
@@ -609,6 +640,7 @@ impl DictationApp {
     fn fail_pill(&mut self, error: String, cx: &mut Context<Self>) {
         self.phase = Some(PillPhase::Processing);
         self.capture = None;
+        self.capture_adopted = false;
         self.delivery = Some(PillDelivery::Failed);
         self.schedule_pill_close(cx);
         self.error = Some(error);
@@ -664,6 +696,7 @@ impl DictationApp {
                         self.finish_after_start = false;
                         self.levels = vec![0.0; 120].into();
                         self.capture = Some(capture_id);
+                        self.capture_adopted = true;
                         if self.pill.is_none() {
                             self.pill = crate::pill::open(cx.entity(), self.dictation_hotkey(), cx);
                         }
@@ -694,7 +727,28 @@ impl DictationApp {
             "dictation_capture_cancelled" => {
                 self.hotkey_capturing = false;
             }
-            "dictation_state_changed" | "dictation.state_changed" | "dictation_config_changed" => {
+            "dictation_state_changed" | "dictation.state_changed" => {
+                // An adopted session gets no RPC reply of its own — the owner
+                // client's stop/cancel only reaches us as this broadcast. A
+                // non-recording state while an adopted session shows
+                // Recording means the capture is gone: retire the pill rather
+                // than leave a dead waveform whose Стоп later answers with a
+                // bogus "Не доставлено". Own sessions skip this — a stray
+                // broadcast (dictation.cancel does not stop a live capture)
+                // must not drop a capture that is still streaming.
+                if state_broadcast_ended(event.get("state").and_then(Value::as_str))
+                    && self.phase == Some(PillPhase::Recording)
+                    && self.capture_adopted
+                {
+                    self.phase = None;
+                    self.capture = None;
+                    self.capture_adopted = false;
+                    self.delivery = None;
+                    self.close_pill(cx);
+                }
+                self.call("dictation.state", "dictation.get_state", json!({}));
+            }
+            "dictation_config_changed" => {
                 self.call("dictation.state", "dictation.get_state", json!({}));
             }
             "dictation_stats_changed" => {
@@ -719,6 +773,14 @@ impl DictationApp {
             _ => {}
         }
     }
+}
+
+/// Does a `dictation_state_changed` / `dictation.state_changed` broadcast mean
+/// the Engine session ended? True for every named non-recording state — the
+/// underscore variant says "recording", the dotted contract "capturing"; a
+/// missing `state` field carries no information.
+fn state_broadcast_ended(state: Option<&str>) -> bool {
+    matches!(state, Some(s) if s != "recording" && s != "capturing")
 }
 
 /// Unhide a `show: false` / minimized window, then activate it. GPUI's
@@ -805,5 +867,24 @@ fn vk_to_key_name(vk: u32) -> Option<String> {
         0x2D => Some("Insert".into()),
         0x2E => Some("Delete".into()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::state_broadcast_ended;
+
+    /// Adopted-session retirement: only a named non-recording broadcast ends
+    /// the adopted pill — "recording"/"capturing" (live) and a missing state
+    /// field (no information) must keep it.
+    #[test]
+    fn state_broadcast_ended_classification() {
+        for ended in ["idle", "transcribing", "pending", "error"] {
+            assert!(state_broadcast_ended(Some(ended)), "{ended}");
+        }
+        for live in ["recording", "capturing"] {
+            assert!(!state_broadcast_ended(Some(live)), "{live}");
+        }
+        assert!(!state_broadcast_ended(None));
     }
 }

@@ -1,0 +1,7 @@
+=== disable autostart when the Run value was never set ===
+  pre-fix : set_autostart(false)=false -> treated as failure (misleading)
+  post-fix: set_autostart(false)=true  -> autostart=false error=None
+
+=== enable autostart with a denied registry write ===
+  pre-fix : autostart=false error=None — silent snap-back
+  post-fix: autostart=false error=Some("Не удалось обновить автозапуск.") — surfaced

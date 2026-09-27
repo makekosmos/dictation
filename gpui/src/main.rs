@@ -220,7 +220,10 @@ pub(crate) fn set_autostart(on: bool) -> bool {
                 (value.len() * 2) as u32,
             ) == 0
         } else {
-            RegDeleteValueW(hkey, name.as_ptr()) == 0
+            // ERROR_FILE_NOT_FOUND = the value was never set — the desired
+            // end state (no autostart) is already reality, not a failure.
+            let code = RegDeleteValueW(hkey, name.as_ptr());
+            code == 0 || code == windows_sys::Win32::Foundation::ERROR_FILE_NOT_FOUND
         };
         RegCloseKey(hkey);
         ok
