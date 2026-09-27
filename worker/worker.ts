@@ -245,7 +245,11 @@ function isObject(value: unknown): value is Message {
   return !!value && typeof value === "object";
 }
 
-if (import.meta.main) {
+if (
+  "pkg" in process ||
+  process.argv[1]?.endsWith("worker.ts") ||
+  process.argv[1]?.endsWith("worker.js")
+) {
   const worker = new DictationWorker((message) =>
     process.stdout.write(`${JSON.stringify(message)}\n`),
   );

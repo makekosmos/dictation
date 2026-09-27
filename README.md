@@ -3,9 +3,12 @@
 Marketplace app for Kosmos Engine. It owns the Dictation UI and a Windows worker that orchestrates capture, transcription and insertion through the manifest-scoped `dictation.v2` Engine operations. Microphone, global hotkey, overlay lifecycle, credentials, transcription providers and text injection remain Engine-owned capabilities; the app never accesses them directly.
 
 ```powershell
-bun install --frozen-lockfile
-bun run check
+pnpm install --frozen-lockfile
+pnpm run check
 ```
+
+The Windows worker is compiled and packaged with the Node toolchain during the
+normal package check.
 
 Install the resulting `release/dictation-<version>.kspkg` in Kosmos Marketplace or through Settings → Extensions.
 
