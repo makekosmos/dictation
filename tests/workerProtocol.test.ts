@@ -34,6 +34,25 @@ async function finishLastCall(
   await worker.message({ method: "worker.result", id: call.id, ok: true, result });
 }
 
+// Reject the most recent worker.call for one Engine operation.
+async function failOperation(
+  worker: DictationWorker,
+  messages: Record<string, unknown>[],
+  operation: string,
+  error: string,
+) {
+  const call = workerCalls(messages)
+    .filter((m) => (m.params as { operation?: string }).operation === operation)
+    .at(-1)!;
+  await worker.message({ method: "worker.result", id: call.id, ok: false, error });
+}
+
+// Resolve a specific worker.call by id — needed when two sessions have the
+// same Engine operation in flight and the STALE one must be picked.
+async function finishCallById(worker: DictationWorker, id: unknown, result: unknown) {
+  await worker.message({ method: "worker.result", id, ok: true, result });
+}
+
 // Resolve the most recent worker.call for one Engine operation — needed when a
 // fire-and-forget (cancel's capture.stop) lands after the call under test.
 async function finishOperation(
@@ -404,5 +423,183 @@ describe("dictation.v2 worker", () => {
     await worker.message({ method: "worker.result", id: call.id, ok: false, error: "denied" });
     await invoke;
     expect(messages.at(-1)).toMatchObject({ event: "dictation.error", data: { code: "denied" } });
+  });
+
+  it("does not let a superseded session's transcribe failure cancel the live session", async () => {
+    const { worker, messages } = harness();
+    await worker.message({ method: "worker.bootstrap", token: "t", generation: 1 });
+    const first = worker.message({
+      method: "worker.invoke",
+      id: "invoke-1",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    await finishLastCall(worker, messages, { windowId: "window-1" });
+    await finishLastCall(worker, messages, { captureId: "capture-1" });
+    await first;
+    const finish = worker.message({
+      method: "worker.invoke",
+      id: "invoke-2",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    await finishLastCall(worker, messages, {
+      captureId: "capture-1",
+      audioB64: "UklGRg==",
+      durationMs: 900,
+    });
+    // Transcribe in flight → cancel → a new session starts before the stale
+    // reply lands.
+    await worker.message({
+      method: "worker.invoke",
+      id: "invoke-cancel",
+      operation: "dictation.cancel",
+      params: {},
+    });
+    const second = worker.message({
+      method: "worker.invoke",
+      id: "invoke-3",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    await finishOperation(worker, messages, "dictation.window.foreground", {
+      windowId: "window-2",
+    });
+    await finishOperation(worker, messages, "dictation.capture.start", { captureId: "capture-2" });
+    // Session 2 is now capturing. The stale transcribe REJECTS — its failure
+    // belongs to the dead session and must not touch the live one.
+    await failOperation(worker, messages, "dictation.speech.transcribe", "engine-busy");
+    await Promise.all([finish, second]);
+    expect(
+      workerCalls(messages).filter(
+        (m) =>
+          (m.params as { operation?: string }).operation === "dictation.capture.stop" &&
+          (m.params as { params?: { captureId?: string } }).params?.captureId === "capture-2",
+      ),
+    ).toHaveLength(0);
+    expect(messages.filter((m) => m.event === "dictation.error")).toHaveLength(0);
+    // Session 2 still owns its capture: a fresh trigger finishes it.
+    const stop2 = worker.message({
+      method: "worker.invoke",
+      id: "invoke-4",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    await finishLastCall(worker, messages, { captureId: "capture-2", audioB64: "", durationMs: 0 });
+    await stop2;
+    expect(callOperations(messages).at(-1)).toBe("dictation.capture.stop");
+    expect(messages.find((m) => m.method === "worker.result" && m.id === "invoke-4")).toMatchObject(
+      { ok: true, result: { state: "idle" } },
+    );
+  });
+
+  it("does not let a superseded start's failure cancel the live session", async () => {
+    const { worker, messages } = harness();
+    await worker.message({ method: "worker.bootstrap", token: "t", generation: 1 });
+    const first = worker.message({
+      method: "worker.invoke",
+      id: "invoke-1",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    await finishLastCall(worker, messages, { windowId: "window-1" });
+    // Session 1's capture.start is in flight when the cancel + retrigger land.
+    await worker.message({
+      method: "worker.invoke",
+      id: "invoke-cancel",
+      operation: "dictation.cancel",
+      params: {},
+    });
+    const second = worker.message({
+      method: "worker.invoke",
+      id: "invoke-2",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    const foregrounds = workerCalls(messages).filter(
+      (m) => (m.params as { operation?: string }).operation === "dictation.window.foreground",
+    );
+    await finishCallById(worker, foregrounds.at(-1)!.id, { windowId: "window-2" });
+    // Both capture.start calls are in flight: stale session 1's rejects.
+    const starts = workerCalls(messages).filter(
+      (m) => (m.params as { operation?: string }).operation === "dictation.capture.start",
+    );
+    expect(starts).toHaveLength(2);
+    await worker.message({
+      method: "worker.result",
+      id: starts[0].id,
+      ok: false,
+      error: "engine-busy",
+    });
+    await finishCallById(worker, starts[1].id, { captureId: "capture-2" });
+    // Let any stray capture.stop settle so the invokes resolve either way.
+    for (const stop of workerCalls(messages).filter(
+      (m) => (m.params as { operation?: string }).operation === "dictation.capture.stop",
+    )) {
+      await finishCallById(worker, stop.id, {});
+    }
+    await Promise.all([first, second]);
+    // The stale rejection must not cancel() — session 2's capture stays live
+    // (no orphan stop for its id) and no bogus dictation.error surfaces.
+    expect(messages.filter((m) => m.event === "dictation.error")).toHaveLength(0);
+    expect(
+      workerCalls(messages).filter(
+        (m) =>
+          (m.params as { operation?: string }).operation === "dictation.capture.stop" &&
+          (m.params as { params?: { captureId?: string } }).params?.captureId === "capture-2",
+      ),
+    ).toHaveLength(0);
+    expect(messages.find((m) => m.method === "worker.result" && m.id === "invoke-2")).toMatchObject(
+      { ok: true, result: { state: "capturing" } },
+    );
+  });
+
+  it("lets a superseded start's id-less reply pass without throwing capture-id-missing", async () => {
+    const { worker, messages } = harness();
+    await worker.message({ method: "worker.bootstrap", token: "t", generation: 1 });
+    const first = worker.message({
+      method: "worker.invoke",
+      id: "invoke-1",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    await finishLastCall(worker, messages, { windowId: "window-1" });
+    await worker.message({
+      method: "worker.invoke",
+      id: "invoke-cancel",
+      operation: "dictation.cancel",
+      params: {},
+    });
+    const second = worker.message({
+      method: "worker.invoke",
+      id: "invoke-2",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    const foregrounds = workerCalls(messages).filter(
+      (m) => (m.params as { operation?: string }).operation === "dictation.window.foreground",
+    );
+    await finishCallById(worker, foregrounds.at(-1)!.id, { windowId: "window-2" });
+    const starts = workerCalls(messages).filter(
+      (m) => (m.params as { operation?: string }).operation === "dictation.capture.start",
+    );
+    expect(starts).toHaveLength(2);
+    // Stale session 1's capture.start lands malformed (no captureId). If the
+    // stale check ran AFTER the capture-id-missing throw, this would reject
+    // into message()'s catch and cancel() session 2.
+    await finishCallById(worker, starts[0].id, {});
+    await finishCallById(worker, starts[1].id, { captureId: "capture-2" });
+    await Promise.all([first, second]);
+    expect(messages.filter((m) => m.event === "dictation.error")).toHaveLength(0);
+    expect(
+      workerCalls(messages).filter(
+        (m) =>
+          (m.params as { operation?: string }).operation === "dictation.capture.stop" &&
+          (m.params as { params?: { captureId?: string } }).params?.captureId === "capture-2",
+      ),
+    ).toHaveLength(0);
+    expect(messages.find((m) => m.method === "worker.result" && m.id === "invoke-2")).toMatchObject(
+      { ok: true, result: { state: "capturing" } },
+    );
   });
 });

@@ -143,7 +143,11 @@ fn main() {
 
 // --- Windows autostart (HKCU\...\Run\KosmosDictation) -------------------------
 
+// Only consumed by the #[cfg(windows)] fns below — gate the constants too or
+// cargo check/clippy on a non-Windows host flags them as dead code.
+#[cfg(windows)]
 const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+#[cfg(windows)]
 const RUN_VALUE: &str = "KosmosDictation";
 
 /// Whether the Run entry exists (any value — we don't police the path).

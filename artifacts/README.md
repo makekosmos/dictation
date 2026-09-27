@@ -1,3 +1,72 @@
+# KOS-220 reproduction artifacts (third pass — prepended)
+
+Independent reproductions captured BEFORE the fixes on `kos-220`. Base
+included all merged kos-172 + kos-193 fixes; these are NEW bugs.
+
+## G3 — `dictation-gpui` does not compile (`gpui/src/app.rs`)
+
+`gpui-compile-prefix.txt` — `cargo +1.95.0 check` (toolchain in ~/.rustup,
+deps resolve offline, `RUST_FONTCONFIG_DLOPEN=1` needed since pkg-config is
+absent) fails on the merged kos-193 tree:
+
+    error[E0308]: mismatched types
+       --> src/app.rs:262:9
+        match self.capture.take() { ... }   // arms yield bool
+        expected `()`, found `bool`
+
+KOS-193 made `send_command` return `bool` but left this `match` in statement
+position. `bun run check` never builds the crate and the kos-193 gate used a
+`wincheck` shim, so the break slipped through. Fix: `()`-typed match arms.
+
+## G4 — Stuck pill on a dead worker channel (`gpui/src/app.rs`)
+
+`send_command` returns false when the worker thread is gone, but
+`dictation_begin`, `dictation_finish` and the `pill.stop`→transcribe handoff
+ignored it — the pill would sit on "Запуск записи…"/"Распознаю" forever
+(kos-193 fixed this class only for `hotkey_capture_start`). Simulated via
+`gpui-empty-audio-sim.rs` (same harness, third section). Fix: `fail_pill` on
+`!sent` at all three sites.
+
+## G5 — Zero-length capture shows a bogus error pill (`gpui/src/app.rs`)
+
+`gpui-empty-audio-sim.rs` + `gpui-empty-audio-sim.txt` — standalone sim of
+the `dictation.pill.stop` reply arm, pre/post. `unwrap_or_default()`
+collapsed missing and EMPTY `audioB64` into "" → `dictation_transcribe`
+rejected it ("Engine не вернул аудио записи") → `fail_pill` shows
+"Не доставлено" 4.5 s + sticky banner — for a plain quick PTT tap.
+`worker.ts` `finishCapture` treats `""` as silent finish and only a MISSING
+field as `audio-missing`. Fix: `Some("")` closes silently, `None` keeps the
+error, non-empty audio transcribes as before.
+
+## W3 — A stale session's failure cancels the live session (`worker/worker.ts`)
+
+`worker-stale-failure-prefix.txt` — two vitest reproductions, both fail
+pre-fix:
+
+1. finish → `speech.transcribe` in flight → cancel → re-trigger → the stale
+   transcribe's late REJECTION reaches `message()`'s catch → `cancel()`
+   stops capture-2 (live!) and emits a bogus `dictation.error`. KOS-193
+   guarded the success path (`captureId !== captureId`); the error path was
+   unguarded.
+2. start → `capture.start` in flight → cancel → re-trigger → the stale
+   start's REJECTION likewise cancels session 2; a stale start with an
+   id-less reply also threw `capture-id-missing` → same clobber.
+
+Fix: `startCapture`/`finishCapture` catch blocks return quietly when the
+session is no longer current (`startSeq` / `captureId` guards), and the
+stale check runs before the `capture-id-missing` throw.
+
+## P1 — Worker binary compiled for the host arch (`scripts/build-worker.mjs`)
+
+`worker-build-target.txt` — `bun build --compile` without `--target` emits
+the HOST binary: on Linux the packaged `worker/dictation-worker.exe` is an
+ELF (magic `7f 45`), not a PE — yet `package.manifest.json` declares
+worker → windows/x86_64 only, and `check-kspkg` cannot tell the difference
+(it hashes whatever bytes were built). Fix: `--target bun-windows-x64`;
+verified offline, produces `MZ` header.
+
+---
+
 # KOS-193 reproduction artifacts (second pass — prepended)
 
 Independent reproductions captured BEFORE the fixes on `kos-193`. Base
