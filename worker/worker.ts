@@ -166,6 +166,11 @@ export class DictationWorker {
     if (!captureId) return;
     this.setState("transcribing");
     const stopped = await this.call("dictation.capture.stop", { captureId });
+    // A stale continuation must not touch shared state: cancel() cleared the
+    // fields, or a newer session already installed its own captureId/windowId
+    // — writing through would insert old text into the new session's window
+    // and wipe its live capture.
+    if (this.captureId !== captureId) return;
     const audio = isObject(stopped.result) ? stopped.result : {};
     const audioB64 = typeof audio.audioB64 === "string" ? audio.audioB64 : null;
     if (audioB64 === null) throw new Error("audio-missing");
@@ -182,6 +187,7 @@ export class DictationWorker {
       durationSec: typeof audio.durationMs === "number" ? Math.max(0, audio.durationMs) / 1000 : 0,
       delivery: "text_only",
     });
+    if (this.captureId !== captureId) return; // cancelled/superseded mid-flight
     const text =
       isObject(transcription.result) && typeof transcription.result.text === "string"
         ? transcription.result.text
@@ -191,6 +197,7 @@ export class DictationWorker {
       const targetWindow = this.windowId;
       if (!targetWindow) throw new Error("window-id-missing");
       await this.call("dictation.input.insert_text", { text, targetWindow });
+      if (this.captureId !== captureId) return; // cancelled/superseded mid-flight
     }
     this.captureId = null;
     this.windowId = null;

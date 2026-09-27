@@ -34,6 +34,20 @@ async function finishLastCall(
   await worker.message({ method: "worker.result", id: call.id, ok: true, result });
 }
 
+// Resolve the most recent worker.call for one Engine operation — needed when a
+// fire-and-forget (cancel's capture.stop) lands after the call under test.
+async function finishOperation(
+  worker: DictationWorker,
+  messages: Record<string, unknown>[],
+  operation: string,
+  result: unknown,
+) {
+  const call = workerCalls(messages)
+    .filter((m) => (m.params as { operation?: string }).operation === operation)
+    .at(-1)!;
+  await worker.message({ method: "worker.result", id: call.id, ok: true, result });
+}
+
 describe("dictation.v2 worker", () => {
   it("keeps the exact Engine operation allow-list", () => {
     expect(DICTATION_OPERATIONS).toEqual([
@@ -272,6 +286,109 @@ describe("dictation.v2 worker", () => {
       params: { kind: "toggle", phase: "up" },
     });
     expect(callOperations(messages)).toEqual([]);
+  });
+
+  it("finishes silently when cancelled while transcribe is in flight", async () => {
+    const { worker, messages } = harness();
+    await worker.message({ method: "worker.bootstrap", token: "t", generation: 1 });
+    const run = worker.message({
+      method: "worker.invoke",
+      id: "invoke-start",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    await finishLastCall(worker, messages, { windowId: "window-1" });
+    await finishLastCall(worker, messages, { captureId: "capture-1" });
+    await run;
+    const finish = worker.message({
+      method: "worker.invoke",
+      id: "invoke-finish",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    await finishLastCall(worker, messages, {
+      captureId: "capture-1",
+      audioB64: "UklGRg==",
+      durationMs: 900,
+    });
+    // speech.transcribe is in flight when the cancel lands.
+    await worker.message({
+      method: "worker.invoke",
+      id: "invoke-cancel",
+      operation: "dictation.cancel",
+      params: {},
+    });
+    await finishOperation(worker, messages, "dictation.speech.transcribe", { text: "текст" });
+    await finish;
+    // A cancelled session must not surface an error or reach insert_text:
+    // cancel() already cleared the fields its stale continuation would use.
+    expect(messages.filter((m) => m.event === "dictation.error")).toHaveLength(0);
+    expect(callOperations(messages)).not.toContain("dictation.input.insert_text");
+    expect(
+      messages.find((m) => m.method === "worker.result" && m.id === "invoke-finish"),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("does not leak a superseded session's text into the next session", async () => {
+    const { worker, messages } = harness();
+    await worker.message({ method: "worker.bootstrap", token: "t", generation: 1 });
+    const first = worker.message({
+      method: "worker.invoke",
+      id: "invoke-1",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    await finishLastCall(worker, messages, { windowId: "window-1" });
+    await finishLastCall(worker, messages, { captureId: "capture-1" });
+    await first;
+    const finish = worker.message({
+      method: "worker.invoke",
+      id: "invoke-2",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    await finishLastCall(worker, messages, {
+      captureId: "capture-1",
+      audioB64: "UklGRg==",
+      durationMs: 900,
+    });
+    // Transcribe in flight → cancel → a new session starts before the stale
+    // reply lands.
+    await worker.message({
+      method: "worker.invoke",
+      id: "invoke-cancel",
+      operation: "dictation.cancel",
+      params: {},
+    });
+    const second = worker.message({
+      method: "worker.invoke",
+      id: "invoke-3",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    await finishOperation(worker, messages, "dictation.window.foreground", {
+      windowId: "window-2",
+    });
+    await finishOperation(worker, messages, "dictation.capture.start", { captureId: "capture-2" });
+    await finishOperation(worker, messages, "dictation.speech.transcribe", {
+      text: "устаревший текст",
+    });
+    await Promise.all([finish, second]);
+    // The stale continuation used to read the NEW session's windowId — the
+    // cancelled transcript would be pasted into the new target window and the
+    // live capture state wiped.
+    expect(callOperations(messages)).not.toContain("dictation.input.insert_text");
+    expect(messages.filter((m) => m.event === "dictation.error")).toHaveLength(0);
+    // Session 2 still owns the capture: its stop finishes it.
+    const stop2 = worker.message({
+      method: "worker.invoke",
+      id: "invoke-4",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    await finishLastCall(worker, messages, { captureId: "capture-2", audioB64: "", durationMs: 0 });
+    await stop2;
+    expect(callOperations(messages).at(-1)).toBe("dictation.capture.stop");
   });
 
   it("resets state and emits a safe error when Engine rejects a call", async () => {

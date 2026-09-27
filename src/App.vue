@@ -35,6 +35,9 @@ const fallback: Config = {
 };
 const config = ref<Config>({ ...fallback });
 const loading = ref(true);
+// False while get_config has never succeeded — the form shows fallbacks then,
+// and saving them would overwrite the real Engine config with defaults.
+const settingsLoaded = ref(false);
 const saving = ref(false);
 const message = ref("");
 const hasApiKey = ref(false);
@@ -112,6 +115,7 @@ async function load() {
     const result = await requireDictation().getConfig();
     config.value = { ...fallback, ...result.config };
     hasApiKey.value = result.hasApiKey === true;
+    settingsLoaded.value = true;
     localModels.value = await requireDictation().listLocalModels();
   } catch (error) {
     message.value = error instanceof Error ? error.message : "Не удалось загрузить настройки";
@@ -121,6 +125,10 @@ async function load() {
 }
 
 async function save() {
+  if (!settingsLoaded.value) {
+    message.value = "Настройки ещё не загружены — повторите после загрузки";
+    return;
+  }
   saving.value = true;
   message.value = "";
   try {
@@ -217,6 +225,7 @@ onMounted(load);
             description="Новая горячая клавиша применяется сразу."
             button-label="Сохранить"
             variant="ghost"
+            :disabled="!settingsLoaded"
             :loading="saving"
             @click="save"
           />

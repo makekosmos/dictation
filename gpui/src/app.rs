@@ -45,6 +45,10 @@ pub struct DictationApp {
     /// adopted from `dictation_audio_level` events when another client
     /// (e.g. the Cortex Manager record button) started the capture.
     capture: Option<String>,
+    /// A `dictation_ptt_trigger` `up` that landed while `capture.start` was
+    /// in flight — the session is finished the moment its reply arrives
+    /// (worker.ts `stopAfterStart` parity).
+    finish_after_start: bool,
     last_duration_ms: f64,
     /// Live mic RMS levels (`dictation_audio_level` WS events) — the pill's
     /// waveform ring buffer, last 120 samples like the Vue pill history.
@@ -82,6 +86,7 @@ impl DictationApp {
             autostart: crate::autostart_enabled(),
             phase: None,
             capture: None,
+            finish_after_start: false,
             last_duration_ms: 0.0,
             levels: VecDeque::new(),
             hotkey_capturing: false,
@@ -138,12 +143,15 @@ impl DictationApp {
     }
 
     /// Worker command that doesn't map to a data slot (session control ops
-    /// are intercepted by name in `drain`).
-    fn send_command(&mut self, command: Command) {
+    /// are intercepted by name in `drain`). False when the worker channel is
+    /// already dead — the command never left.
+    fn send_command(&mut self, command: Command) -> bool {
         if self.worker.commands.send(command).is_err() {
             self.worker_dead = true;
             self.error = Some("Соединение с Engine завершено. Перезапустите приложение.".into());
+            return false;
         }
+        true
     }
 
     /// Ready slot payload or Null — the view stays total over missing data.
@@ -158,7 +166,21 @@ impl DictationApp {
     /// becomes the new hotkey; Esc cancels).
     pub fn hotkey_capture_start(&mut self, cx: &mut Context<Self>) {
         self.hotkey_capturing = true;
-        self.action("dictation.begin_hotkey_capture", json!({}));
+        self.notice = None;
+        // Dedicated slot instead of `action()`: the "@action" reply is
+        // anonymous, so a failed arm couldn't reset the flag — the window
+        // would show "Нажмите комбинацию…" forever (only the capture_key /
+        // capture_cancelled events clear it, and they never come when the
+        // op failed). Not sent via `call()` either: the ops retry map would
+        // re-arm capture every ~2s after a transient failure.
+        let sent = self.send_command(Command::Rpc {
+            slot: "dictation.hotkey_capture".into(),
+            op: "dictation.begin_hotkey_capture",
+            params: json!({}),
+        });
+        if !sent {
+            self.hotkey_capturing = false;
+        }
         cx.notify();
     }
 
@@ -191,6 +213,7 @@ impl DictationApp {
         self.phase = None;
         self.delivery = None;
         self.levels.clear();
+        self.finish_after_start = false;
         self.session += 1;
         let capture_id = self.capture.take();
         self.send_command(Command::DictationCancel {
@@ -206,6 +229,7 @@ impl DictationApp {
     fn dictation_begin(&mut self, cx: &mut Context<Self>) {
         self.session += 1;
         self.delivery = None;
+        self.finish_after_start = false;
         // Fixed-width history from frame one: without it the first samples
         // remap every bar slot as the buffer grows ("bars squeeze in").
         self.levels = vec![0.0; 120].into();
@@ -446,6 +470,12 @@ impl DictationApp {
                     } else if let Some(id) = capture_id {
                         self.capture = Some(id);
                         self.phase = Some(PillPhase::Recording);
+                        if self.finish_after_start {
+                            // The PTT key was released while capture.start
+                            // was in flight — finish the fresh session now.
+                            self.finish_after_start = false;
+                            self.dictation_finish(cx);
+                        }
                     } else {
                         self.fail_pill("Engine не вернул captureId".into(), cx);
                     }
@@ -498,6 +528,17 @@ impl DictationApp {
             "dictation.pill.cancel" => {
                 if let Err(e) = reply.result {
                     self.error = Some(e);
+                    cx.notify();
+                }
+            }
+            "dictation.hotkey_capture" => {
+                // Armed: capture_key / capture_cancelled events drive the
+                // rest. A failed arm must clear the flag or the status
+                // window is stuck showing "Нажмите комбинацию…" forever.
+                if let Err(e) = reply.result {
+                    self.hotkey_capturing = false;
+                    self.error = Some(e);
+                    cx.notify();
                 }
             }
             "@action" => match reply.result {
@@ -533,8 +574,8 @@ impl DictationApp {
 
     /// desktop/electron/dictation-pill.ts parity: the Rust WH_KEYBOARD_LL
     /// hook emits `dictation_toggle_trigger` (toggle mode) and
-    /// `dictation_ptt_trigger {phase}` (PTT mode — both phases route into the
-    /// same toggle call the status button and pill Стоп use). State/progress
+    /// `dictation_ptt_trigger {phase}` (PTT mode — `down` arms, `up` finishes,
+    /// an `up` during Starting sets `finish_after_start`). State/progress
     /// events refresh the matching slots.
     fn handle_engine_event(&mut self, event: Value, cx: &mut Context<Self>) {
         let name = event
@@ -542,8 +583,26 @@ impl DictationApp {
             .and_then(Value::as_str)
             .unwrap_or_default();
         match name {
-            "dictation_toggle_trigger" | "dictation_ptt_trigger" => {
+            "dictation_toggle_trigger" => {
                 self.dictation_toggle(cx);
+            }
+            // PTT is phase-aware: only `down` arms a session. A bare `up`
+            // (key held at launch, releasing after the pill's Отмена) must
+            // not start capture, a repeat `down` while recording must not
+            // finish it early, and an `up` during Starting is remembered so
+            // the session finishes the moment capture.start lands — dropping
+            // it would leave the mic recording with the key released.
+            "dictation_ptt_trigger" => {
+                let released = event.get("phase").and_then(Value::as_str) == Some("up");
+                match (released, self.phase) {
+                    (false, None) => self.dictation_begin(cx),
+                    (true, Some(PillPhase::Starting)) => self.finish_after_start = true,
+                    (true, Some(PillPhase::Recording)) => self.dictation_finish(cx),
+                    // A fresh hold while the previous session still
+                    // transcribes preempts it, like a toggle press.
+                    (false, Some(PillPhase::Processing)) => self.dictation_toggle(cx),
+                    _ => {}
+                }
             }
             // Live mic RMS from the Engine capture thread — ring buffer of the
             // last 120 samples for the pill waveform (Vue WAVEFORM_HISTORY_SIZE).
@@ -560,6 +619,7 @@ impl DictationApp {
                     {
                         self.session += 1;
                         self.delivery = None;
+                        self.finish_after_start = false;
                         self.levels = vec![0.0; 120].into();
                         self.capture = Some(capture_id);
                         if self.pill.is_none() {
