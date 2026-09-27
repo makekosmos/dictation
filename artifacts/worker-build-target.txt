@@ -1,0 +1,11 @@
+=== build-worker.mjs: host-arch vs pinned windows target ===
+
+pre-fix (no --target) on this Linux host: bun build --compile produced
+  magic bytes: 7f 45 ('\x7fE' — ELF header, a Linux binary inside the
+  windows-only worker target of the .kspkg)
+
+post-fix (--target bun-windows-x64) same host:
+  [348ms] compile  worker/dictation-worker.exe bun-windows-x64-v1.4.2
+  magic bytes: 4d 5a ('MZ' — PE/COFF, a real Windows binary)
+
+verified: head -c 2 worker/dictation-worker.exe | od -An -c

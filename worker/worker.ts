@@ -131,33 +131,42 @@ export class DictationWorker {
     // second capture.start is rejected "busy").
     this.setState("starting");
     const seq = ++this.startSeq;
-    const foreground = await this.call("dictation.window.foreground", {});
-    if (seq !== this.startSeq) return; // cancelled or superseded mid-flight
-    const windowId =
-      isObject(foreground.result) && typeof foreground.result.windowId === "string"
-        ? foreground.result.windowId
-        : null;
-    if (!windowId) throw new Error("window-id-missing");
-    const started = await this.call("dictation.capture.start", {});
-    const captureId =
-      isObject(started.result) && typeof started.result.captureId === "string"
-        ? started.result.captureId
-        : null;
-    if (!captureId) throw new Error("capture-id-missing");
-    if (seq !== this.startSeq || this.state !== "starting") {
-      // cancel() or a newer trigger ran while capture.start was in flight —
-      // stop the orphaned Engine session instead of leaving the capture slot
-      // busy forever.
-      await this.call("dictation.capture.stop", { captureId });
-      return;
-    }
-    this.windowId = windowId;
-    this.captureId = captureId;
-    this.setState("capturing");
-    if (this.stopAfterStart) {
-      // PTT released before capture.start landed — finish immediately.
-      this.stopAfterStart = false;
-      await this.finishCapture();
+    try {
+      const foreground = await this.call("dictation.window.foreground", {});
+      if (seq !== this.startSeq) return; // cancelled or superseded mid-flight
+      const windowId =
+        isObject(foreground.result) && typeof foreground.result.windowId === "string"
+          ? foreground.result.windowId
+          : null;
+      if (!windowId) throw new Error("window-id-missing");
+      const started = await this.call("dictation.capture.start", {});
+      const captureId =
+        isObject(started.result) && typeof started.result.captureId === "string"
+          ? started.result.captureId
+          : null;
+      if (seq !== this.startSeq || this.state !== "starting") {
+        // cancel() or a newer trigger ran while capture.start was in flight —
+        // stop the orphaned Engine session instead of leaving the capture slot
+        // busy forever. A malformed reply carries no id: nothing to stop —
+        // return quietly either way, this session is no longer ours to fail.
+        if (captureId) await this.call("dictation.capture.stop", { captureId });
+        return;
+      }
+      if (!captureId) throw new Error("capture-id-missing");
+      this.windowId = windowId;
+      this.captureId = captureId;
+      this.setState("capturing");
+      if (this.stopAfterStart) {
+        // PTT released before capture.start landed — finish immediately.
+        this.stopAfterStart = false;
+        await this.finishCapture();
+      }
+    } catch (error) {
+      // A stale start's failure (late Engine rejection, malformed reply)
+      // belongs to a dead session — rethrowing would run message()'s catch →
+      // cancel() against whatever session is live now.
+      if (seq !== this.startSeq) return;
+      throw error;
     }
   }
 
@@ -165,39 +174,48 @@ export class DictationWorker {
     const captureId = this.captureId;
     if (!captureId) return;
     this.setState("transcribing");
-    const stopped = await this.call("dictation.capture.stop", { captureId });
-    // A stale continuation must not touch shared state: cancel() cleared the
-    // fields, or a newer session already installed its own captureId/windowId
-    // — writing through would insert old text into the new session's window
-    // and wipe its live capture.
-    if (this.captureId !== captureId) return;
-    const audio = isObject(stopped.result) ? stopped.result : {};
-    const audioB64 = typeof audio.audioB64 === "string" ? audio.audioB64 : null;
-    if (audioB64 === null) throw new Error("audio-missing");
-    if (!audioB64) {
-      // Zero-length recording (e.g. PTT released before audio buffered) —
-      // nothing to transcribe; finish silently instead of raising an error.
-      this.captureId = null;
-      this.windowId = null;
-      this.setState("idle");
-      return;
-    }
-    const transcription = await this.call("dictation.speech.transcribe", {
-      audioB64,
-      durationSec: typeof audio.durationMs === "number" ? Math.max(0, audio.durationMs) / 1000 : 0,
-      delivery: "text_only",
-    });
-    if (this.captureId !== captureId) return; // cancelled/superseded mid-flight
-    const text =
-      isObject(transcription.result) && typeof transcription.result.text === "string"
-        ? transcription.result.text
-        : "";
-    if (text) {
-      this.setState("inserting");
-      const targetWindow = this.windowId;
-      if (!targetWindow) throw new Error("window-id-missing");
-      await this.call("dictation.input.insert_text", { text, targetWindow });
+    try {
+      const stopped = await this.call("dictation.capture.stop", { captureId });
+      // A stale continuation must not touch shared state: cancel() cleared the
+      // fields, or a newer session already installed its own captureId/windowId
+      // — writing through would insert old text into the new session's window
+      // and wipe its live capture.
+      if (this.captureId !== captureId) return;
+      const audio = isObject(stopped.result) ? stopped.result : {};
+      const audioB64 = typeof audio.audioB64 === "string" ? audio.audioB64 : null;
+      if (audioB64 === null) throw new Error("audio-missing");
+      if (!audioB64) {
+        // Zero-length recording (e.g. PTT released before audio buffered) —
+        // nothing to transcribe; finish silently instead of raising an error.
+        this.captureId = null;
+        this.windowId = null;
+        this.setState("idle");
+        return;
+      }
+      const transcription = await this.call("dictation.speech.transcribe", {
+        audioB64,
+        durationSec:
+          typeof audio.durationMs === "number" ? Math.max(0, audio.durationMs) / 1000 : 0,
+        delivery: "text_only",
+      });
       if (this.captureId !== captureId) return; // cancelled/superseded mid-flight
+      const text =
+        isObject(transcription.result) && typeof transcription.result.text === "string"
+          ? transcription.result.text
+          : "";
+      if (text) {
+        this.setState("inserting");
+        const targetWindow = this.windowId;
+        if (!targetWindow) throw new Error("window-id-missing");
+        await this.call("dictation.input.insert_text", { text, targetWindow });
+        if (this.captureId !== captureId) return; // cancelled/superseded mid-flight
+      }
+    } catch (error) {
+      // Same staleness rule for the error path: a late Engine rejection from
+      // a cancelled/superseded session must not reach message()'s catch —
+      // its cancel() would wipe the live session that replaced this one.
+      if (this.captureId !== captureId) return;
+      throw error;
     }
     this.captureId = null;
     this.windowId = null;

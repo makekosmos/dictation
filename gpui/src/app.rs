@@ -241,9 +241,16 @@ impl DictationApp {
         }
         self.phase = Some(PillPhase::Starting);
         self.push_pill(cx);
-        self.send_command(Command::DictationStart {
+        if !self.send_command(Command::DictationStart {
             slot: self.pill_slot("start"),
-        });
+        }) {
+            // Dead worker channel — without this the pill sits on "Запуск
+            // записи…" forever: no reply can ever arrive to move it on.
+            self.fail_pill(
+                "Соединение с Engine завершено. Перезапустите приложение.".into(),
+                cx,
+            );
+        }
         cx.notify();
     }
 
@@ -260,14 +267,26 @@ impl DictationApp {
         self.phase = Some(PillPhase::Processing);
         self.push_pill(cx);
         match self.capture.take() {
-            Some(capture_id) => self.send_command(Command::DictationStop {
-                slot: self.pill_slot("stop"),
-                capture_id,
-            }),
-            None => self.send_command(Command::DictationCancel {
-                slot: "dictation.pill.cancel".into(),
-                capture_id: None,
-            }),
+            Some(capture_id) => {
+                // A dead worker channel must not freeze the pill on
+                // "Распознаю" forever — surface the failure like a refused
+                // Engine op (delivery Failed + timed close).
+                if !self.send_command(Command::DictationStop {
+                    slot: self.pill_slot("stop"),
+                    capture_id,
+                }) {
+                    self.fail_pill(
+                        "Соединение с Engine завершено. Перезапустите приложение.".into(),
+                        cx,
+                    );
+                }
+            }
+            None => {
+                self.send_command(Command::DictationCancel {
+                    slot: "dictation.pill.cancel".into(),
+                    capture_id: None,
+                });
+            }
         }
         cx.notify();
     }
@@ -484,20 +503,38 @@ impl DictationApp {
             },
             "dictation.pill.stop" => match reply.result {
                 Ok(v) => {
-                    let audio_b64 = v
-                        .get("audioB64")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string();
                     // speech.transcribe's reply has no durationMs — carry it
                     // over so the result card shows the record length.
                     self.last_duration_ms =
                         v.get("durationMs").and_then(Value::as_f64).unwrap_or(0.0);
-                    self.send_command(Command::DictationTranscribe {
-                        slot: self.pill_slot("result"),
-                        audio_b64,
-                        duration_sec: self.last_duration_ms / 1000.0,
-                    });
+                    match v.get("audioB64").and_then(Value::as_str) {
+                        // Zero-length capture (e.g. a PTT tap released before
+                        // audio buffered): worker.ts parity — finish silently
+                        // instead of surfacing a bogus Не доставлено.
+                        Some("") => {
+                            self.phase = None;
+                            self.delivery = None;
+                            self.close_pill(cx);
+                            cx.notify();
+                        }
+                        Some(audio_b64) => {
+                            let sent = self.send_command(Command::DictationTranscribe {
+                                slot: self.pill_slot("result"),
+                                audio_b64: audio_b64.to_string(),
+                                duration_sec: self.last_duration_ms / 1000.0,
+                            });
+                            if !sent {
+                                self.fail_pill(
+                                    "Соединение с Engine завершено. Перезапустите приложение."
+                                        .into(),
+                                    cx,
+                                );
+                            }
+                        }
+                        // capture.stop answered without audioB64 at all —
+                        // malformed reply (worker.ts "audio-missing" parity).
+                        None => self.fail_pill("Engine не вернул аудио записи".into(), cx),
+                    }
                 }
                 Err(e) => self.fail_pill(e, cx),
             },

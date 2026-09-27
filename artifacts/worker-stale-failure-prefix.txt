@@ -1,0 +1,53 @@
+
+ RUN  v4.1.11 /workspace/wt/dictation-kos-220
+
+ ❯ tests/workerProtocol.test.ts (15 tests | 2 failed) 27ms
+     × does not let a superseded session's transcribe failure cancel the live session 8ms
+     × does not let a superseded start's failure cancel the live session 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/workerProtocol.test.ts > dictation.v2 worker > does not let a superseded session's transcribe failure cancel the live session
+AssertionError: expected [ { method: 'worker.call', …(5) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/workerProtocol.test.ts:484:7
+    482|           (m.params as { params?: { captureId?: string } }).params?.ca…
+    483|       ),
+    484|     ).toHaveLength(0);
+       |       ^
+    485|     expect(messages.filter((m) => m.event === "dictation.error")).toHa…
+    486|     // Session 2 still owns its capture: a fresh trigger finishes it.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/workerProtocol.test.ts > dictation.v2 worker > does not let a superseded start's failure cancel the live session
+AssertionError: expected [ { method: 'worker.event', …(2) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/workerProtocol.test.ts:549:67
+    547|     // The stale rejection must not cancel() — session 2's capture sta…
+    548|     // (no orphan stop for its id) and no bogus dictation.error surfac…
+    549|     expect(messages.filter((m) => m.event === "dictation.error")).toHa…
+       |                                                                   ^
+    550|     expect(
+    551|       workerCalls(messages).filter(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 13 passed (15)
+   Start at  22:26:34
+   Duration  331ms (transform 75ms, setup 0ms, import 91ms, tests 27ms, environment 0ms)
+

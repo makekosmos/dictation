@@ -1,0 +1,10 @@
+=== dictation.pill.stop reply: audioB64 payload ===
+zero-length capture (quick PTT tap) — audioB64: ""
+  pre-fix : phase=Some(Processing) delivery=Some(Failed) error=Some("Engine не вернул аудио записи") cmds=[]
+  post-fix: phase=None delivery=None error=None cmds=[] pill_open=false
+normal capture — audioB64: "UklGRg=="
+  pre-fix : phase=Some(Processing) delivery=None error=None cmds=[Transcribe]
+  post-fix: phase=Some(Processing) delivery=None error=None cmds=[Transcribe] pill_open=true
+malformed reply — audioB64 field absent
+  pre-fix : phase=Some(Processing) delivery=Some(Failed) error=Some("Engine не вернул аудио записи") cmds=[]
+  post-fix: phase=Some(Processing) delivery=Some(Failed) error=Some("Engine не вернул аудио записи") cmds=[] pill_open=true
