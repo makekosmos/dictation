@@ -528,6 +528,7 @@ impl DictationApp {
             "dictation.pill.cancel" => {
                 if let Err(e) = reply.result {
                     self.error = Some(e);
+                    cx.notify();
                 }
             }
             "dictation.hotkey_capture" => {
@@ -537,6 +538,7 @@ impl DictationApp {
                 if let Err(e) = reply.result {
                     self.hotkey_capturing = false;
                     self.error = Some(e);
+                    cx.notify();
                 }
             }
             "@action" => match reply.result {
@@ -617,6 +619,7 @@ impl DictationApp {
                     {
                         self.session += 1;
                         self.delivery = None;
+                        self.finish_after_start = false;
                         self.levels = vec![0.0; 120].into();
                         self.capture = Some(capture_id);
                         if self.pill.is_none() {
