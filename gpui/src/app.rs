@@ -583,11 +583,13 @@ impl DictationApp {
                     } else {
                         self.delivery = Some(Self::pill_delivery_of(&v));
                         self.schedule_pill_close(cx);
+                        // A cancelled session produced no transcript — only a
+                        // real result replaces the "Последняя расшифровка" card.
+                        if let Some(obj) = v.as_object_mut() {
+                            obj.insert("durationMs".into(), Value::from(self.last_duration_ms));
+                        }
+                        self.slots.insert("dictation.result".into(), Slot::Ready(v));
                     }
-                    if let Some(obj) = v.as_object_mut() {
-                        obj.insert("durationMs".into(), Value::from(self.last_duration_ms));
-                    }
-                    self.slots.insert("dictation.result".into(), Slot::Ready(v));
                     if self.error.is_some() {
                         self.error = None;
                     }
@@ -616,6 +618,10 @@ impl DictationApp {
             }
             "@action" => match reply.result {
                 Ok(_) => {
+                    // A succeeded write IS the retry succeeding — clear the
+                    // persistent banner like the pill.result arm does, or a
+                    // stale error sits next to "Выполнено." forever.
+                    self.error = None;
                     self.notice = Some("Выполнено.".into());
                     self.refresh(cx);
                 }
@@ -842,7 +848,10 @@ fn vk_to_key_name(vk: u32) -> Option<String> {
         0x41..=0x5A | 0x30..=0x39 => char::from_u32(vk).map(|c| c.to_string()),
         0x70..=0x87 => Some(format!("F{}", vk - 0x6f)),
         0xBA => Some(";".into()),
-        0xBB => Some("+".into()),
+        // VK_OEM_PLUS must NOT map to the literal '+': '+' is the accelerator
+        // delimiter, so "Ctrl++" parses back as Ctrl alone and the saved
+        // hotkey loses its key. Electron's name for this key is "Plus".
+        0xBB => Some("Plus".into()),
         0xBC => Some(",".into()),
         0xBD => Some("-".into()),
         0xBE => Some(".".into()),
@@ -872,7 +881,8 @@ fn vk_to_key_name(vk: u32) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::state_broadcast_ended;
+    use super::{build_accelerator, state_broadcast_ended, vk_to_key_name};
+    use serde_json::{json, Value};
 
     /// Adopted-session retirement: only a named non-recording broadcast ends
     /// the adopted pill — "recording"/"capturing" (live) and a missing state
@@ -886,5 +896,41 @@ mod tests {
             assert!(!state_broadcast_ended(Some(live)), "{live}");
         }
         assert!(!state_broadcast_ended(None));
+    }
+
+    /// VK_OEM_PLUS must produce the named accelerator token "Plus" — '+' is
+    /// the accelerator delimiter, so "Ctrl++" parses back as a bare "Ctrl"
+    /// (the pill footer's own split('+') drops the empty key part too).
+    #[test]
+    fn accelerator_names_oem_plus() {
+        let event = json!({ "vk": 0xBB, "ctrl": true });
+        let accel = build_accelerator(&event).expect("accelerator");
+        assert_eq!(accel, "Ctrl+Plus");
+        let parts: Vec<&str> = accel.split('+').filter(|p| !p.is_empty()).collect();
+        assert_eq!(parts, ["Ctrl", "Plus"]);
+        // The other OEM punctuation keys stay literal — '+' is the only
+        // collision with the delimiter.
+        for vk in [
+            0xBAu32, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0, 0xDB, 0xDC, 0xDD, 0xDE,
+        ] {
+            let accel = build_accelerator(&json!({ "vk": vk, "ctrl": true })).expect("accelerator");
+            assert_eq!(
+                accel.split('+').filter(|p| !p.is_empty()).count(),
+                2,
+                "{accel}"
+            );
+        }
+    }
+
+    /// A captured key with no usable name must not write a modifier-only
+    /// accelerator at all.
+    #[test]
+    fn accelerator_rejects_unmapped_vk() {
+        assert_eq!(vk_to_key_name(0x1B), None); // Esc → capture_cancelled path
+        assert_eq!(
+            build_accelerator(&json!({ "vk": 0x1B, "ctrl": true })),
+            None
+        );
+        assert_eq!(build_accelerator(&Value::Null), None);
     }
 }

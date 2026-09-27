@@ -116,12 +116,17 @@ async function load() {
     config.value = { ...fallback, ...result.config };
     hasApiKey.value = result.hasApiKey === true;
     settingsLoaded.value = true;
-    localModels.value = await requireDictation().listLocalModels();
   } catch (error) {
     message.value = error instanceof Error ? error.message : "Не удалось загрузить настройки";
-  } finally {
-    loading.value = false;
   }
+  try {
+    // Advisory list: a missing/failed list_local_models op must not flag the
+    // whole load as failed — the model dropdown just shows no local options.
+    localModels.value = await requireDictation().listLocalModels();
+  } catch {
+    /* local model list is advisory */
+  }
+  loading.value = false;
 }
 
 async function save() {

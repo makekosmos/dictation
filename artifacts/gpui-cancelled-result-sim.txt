@@ -1,0 +1,3 @@
+$ rustc gpui-cancelled-result-sim.rs && ./sim
+PRE-FIX after cancelled reply: result slot = Some("{cancelled:true}") (pill_closed=true)
+POST-FIX after cancelled reply: result slot = Some("text=Hello world") (pill_closed=true)

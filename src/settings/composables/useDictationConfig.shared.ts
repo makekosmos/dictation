@@ -33,7 +33,9 @@ function vkToKeyName(vk: number): string {
   if (vk >= 0x70 && vk <= 0x87) return `F${vk - 0x6f}`;
   const oem: Record<number, string> = {
     0xba: ";",
-    0xbb: "+",
+    // VK_OEM_PLUS: '+' is the accelerator delimiter — "Ctrl++" has an empty
+    // key part and parses back as Ctrl alone. Electron spells it "Plus".
+    0xbb: "Plus",
     0xbc: ",",
     0xbd: "-",
     0xbe: ".",
