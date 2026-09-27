@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DICTATION_OPERATIONS, DictationWorker } from "../worker/worker";
 
 function harness(boot = false) {
@@ -14,6 +14,23 @@ async function finishCall(
   result: unknown,
 ) {
   const call = messages.at(-1)!;
+  await worker.message({ method: "worker.result", id: call.id, ok: true, result });
+}
+
+const workerCalls = (messages: Record<string, unknown>[]) =>
+  messages.filter((m) => m.method === "worker.call");
+
+const callOperations = (messages: Record<string, unknown>[]) =>
+  workerCalls(messages).map((m) => (m.params as { operation?: string }).operation);
+
+// Unlike finishCall: invoke replies (`worker.result` outbound) interleave with
+// pending calls when two invokes overlap, so resolve the last worker.call.
+async function finishLastCall(
+  worker: DictationWorker,
+  messages: Record<string, unknown>[],
+  result: unknown,
+) {
+  const call = workerCalls(messages).at(-1)!;
   await worker.message({ method: "worker.result", id: call.id, ok: true, result });
 }
 
@@ -97,6 +114,164 @@ describe("dictation.v2 worker", () => {
     worker.cancel();
     worker.cancel();
     expect(messages).toEqual([]);
+  });
+
+  it("heartbeats so the supervisor does not reap a running worker", async () => {
+    vi.useFakeTimers();
+    try {
+      const { worker, messages } = harness();
+      await worker.message({
+        method: "worker.bootstrap",
+        token: "opaque-token",
+        generation: 7,
+      });
+      messages.length = 0;
+      await vi.advanceTimersByTimeAsync(65_000);
+      const beats = messages.filter((m) => m.method === "worker.heartbeat");
+      expect(beats.length).toBeGreaterThan(0);
+      for (const beat of beats) {
+        expect(beat).toMatchObject({ generation: 7, token: "opaque-token" });
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a second trigger while a capture is still starting", async () => {
+    const { worker, messages } = harness();
+    await worker.message({ method: "worker.bootstrap", token: "t", generation: 1 });
+    const first = worker.message({
+      method: "worker.invoke",
+      id: "invoke-1",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    const second = worker.message({
+      method: "worker.invoke",
+      id: "invoke-2",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    // The second trigger must not fan out into a second Engine session:
+    // a duplicate window.foreground would steal the one-shot foreground
+    // token and the duplicate capture.start would be rejected "busy".
+    expect(workerCalls(messages)).toHaveLength(1);
+    await finishLastCall(worker, messages, { windowId: "window-1" });
+    await finishLastCall(worker, messages, { captureId: "capture-1" });
+    await Promise.all([first, second]);
+    expect(callOperations(messages)).toEqual([
+      "dictation.window.foreground",
+      "dictation.capture.start",
+    ]);
+    expect(messages.find((m) => m.method === "worker.result" && m.id === "invoke-2")).toMatchObject(
+      { ok: true },
+    );
+  });
+
+  it("finishes the capture when push-to-talk is released mid-start", async () => {
+    const { worker, messages } = harness();
+    await worker.message({ method: "worker.bootstrap", token: "t", generation: 1 });
+    const down = worker.message({
+      method: "worker.invoke",
+      id: "invoke-down",
+      operation: "dictation.trigger",
+      params: { kind: "ptt", phase: "down" },
+    });
+    const up = worker.message({
+      method: "worker.invoke",
+      id: "invoke-up",
+      operation: "dictation.trigger",
+      params: { kind: "ptt", phase: "up" },
+    });
+    await finishLastCall(worker, messages, { windowId: "window-1" });
+    await finishLastCall(worker, messages, { captureId: "capture-1" });
+    await finishLastCall(worker, messages, {
+      captureId: "capture-1",
+      audioB64: "UklGRg==",
+      durationMs: 60,
+    });
+    await finishLastCall(worker, messages, { text: "" });
+    await Promise.all([down, up]);
+    expect(callOperations(messages)).toEqual([
+      "dictation.window.foreground",
+      "dictation.capture.start",
+      "dictation.capture.stop",
+      "dictation.speech.transcribe",
+    ]);
+    expect(
+      messages.find((m) => m.method === "worker.result" && m.id === "invoke-down"),
+    ).toMatchObject({ ok: true, result: { state: "idle" } });
+  });
+
+  it("stops a live Engine capture when cancelled mid-capture", async () => {
+    const { worker, messages } = harness();
+    await worker.message({ method: "worker.bootstrap", token: "t", generation: 1 });
+    const run = worker.message({
+      method: "worker.invoke",
+      id: "invoke-1",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    await finishLastCall(worker, messages, { windowId: "window-1" });
+    await finishLastCall(worker, messages, { captureId: "capture-1" });
+    await run;
+    messages.length = 0;
+    await worker.message({
+      method: "worker.invoke",
+      id: "invoke-cancel",
+      operation: "dictation.cancel",
+      params: {},
+    });
+    // Forgetting the id alone would leave the Engine capture slot busy
+    // forever — every later capture.start would fail.
+    expect(callOperations(messages)).toEqual(["dictation.capture.stop"]);
+    expect(workerCalls(messages).at(-1)?.params).toMatchObject({
+      params: { captureId: "capture-1" },
+    });
+  });
+
+  it("stops the Engine capture that resolves after a mid-start cancel", async () => {
+    const { worker, messages } = harness();
+    await worker.message({ method: "worker.bootstrap", token: "t", generation: 1 });
+    const run = worker.message({
+      method: "worker.invoke",
+      id: "invoke-1",
+      operation: "dictation.trigger",
+      params: {},
+    });
+    await finishLastCall(worker, messages, { windowId: "window-1" });
+    await worker.message({
+      method: "worker.invoke",
+      id: "invoke-cancel",
+      operation: "dictation.cancel",
+      params: {},
+    });
+    // capture.start resolves after cancel(): the worker must stop the
+    // orphaned Engine session rather than adopt it.
+    await finishLastCall(worker, messages, { captureId: "capture-late" });
+    // The orphan cleanup issues its own capture.stop call — resolve it.
+    await finishLastCall(worker, messages, { captureId: "capture-late" });
+    await run;
+    expect(callOperations(messages)).toEqual([
+      "dictation.window.foreground",
+      "dictation.capture.start",
+      "dictation.capture.stop",
+    ]);
+    expect(workerCalls(messages).at(-1)?.params).toMatchObject({
+      params: { captureId: "capture-late" },
+    });
+  });
+
+  it("ignores an up-phase toggle trigger instead of double-toggling", async () => {
+    const { worker, messages } = harness();
+    await worker.message({ method: "worker.bootstrap", token: "t", generation: 1 });
+    await worker.message({
+      method: "worker.invoke",
+      id: "invoke-up",
+      operation: "dictation.trigger",
+      params: { kind: "toggle", phase: "up" },
+    });
+    expect(callOperations(messages)).toEqual([]);
   });
 
   it("resets state and emits a safe error when Engine rejects a call", async () => {

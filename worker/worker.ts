@@ -14,6 +14,8 @@ export class DictationWorker {
   private state = "idle";
   private captureId: string | null = null;
   private windowId: string | null = null;
+  private stopAfterStart = false;
+  private startSeq = 0;
   private token = "";
   private generation = 0;
   private packageId = "";
@@ -22,6 +24,7 @@ export class DictationWorker {
   private pid = 0;
   private pending = new Map<string, (message: Message) => void>();
   private nextId = 1;
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly emit: (message: Message) => void) {}
 
@@ -38,8 +41,19 @@ export class DictationWorker {
   }
 
   cancel(): void {
+    // Invalidate any in-flight startCapture: a stale continuation must not
+    // adopt a session owned by a newer trigger.
+    this.startSeq += 1;
+    this.stopAfterStart = false;
+    const captureId = this.captureId;
     this.captureId = null;
     this.windowId = null;
+    if (captureId) {
+      // Tell Engine to drop the live session — forgetting the id alone leaves
+      // the capture slot busy forever (the stdin pump also reaches cancel()
+      // on malformed lines, mid-capture).
+      void this.call("dictation.capture.stop", { captureId }).catch(() => {});
+    }
     if (this.state !== "idle") this.setState("idle");
   }
 
@@ -52,6 +66,7 @@ export class DictationWorker {
       this.hash = typeof message.hash === "string" ? message.hash : "";
       this.pid = typeof message.pid === "number" ? message.pid : 0;
       this.bootstrap();
+      this.startHeartbeats();
       return;
     }
     if (message.method === "worker.result" && typeof message.id === "string") {
@@ -84,14 +99,15 @@ export class DictationWorker {
     const params = isObject(message.params) ? message.params : {};
     const kind = params.kind === "ptt" ? "ptt" : "toggle";
     const phase = params.phase === "up" ? "up" : "down";
-    if (kind === "ptt" && phase === "up") {
-      if (this.state === "capturing") await this.finishCapture();
-      reply(true, { state: this.state });
-      return;
-    }
     try {
-      if (this.state === "idle") await this.startCapture();
-      else if (kind === "toggle" && this.state === "capturing") await this.finishCapture();
+      if (kind === "ptt" && phase === "up") {
+        if (this.state === "capturing") await this.finishCapture();
+        else if (this.state === "starting") this.stopAfterStart = true;
+      } else if (phase === "down" && this.state === "idle") {
+        await this.startCapture();
+      } else if (kind === "toggle" && phase === "down" && this.state === "capturing") {
+        await this.finishCapture();
+      }
       reply(true, { state: this.state });
     } catch (error) {
       this.cancel();
@@ -109,7 +125,14 @@ export class DictationWorker {
   }
 
   private async startCapture(): Promise<void> {
+    // Synchronous transition out of "idle": a trigger that lands while the
+    // RPCs below are in flight must not start a parallel Engine session (the
+    // second window.foreground would steal the one-shot inject token and the
+    // second capture.start is rejected "busy").
+    this.setState("starting");
+    const seq = ++this.startSeq;
     const foreground = await this.call("dictation.window.foreground", {});
+    if (seq !== this.startSeq) return; // cancelled or superseded mid-flight
     const windowId =
       isObject(foreground.result) && typeof foreground.result.windowId === "string"
         ? foreground.result.windowId
@@ -121,9 +144,21 @@ export class DictationWorker {
         ? started.result.captureId
         : null;
     if (!captureId) throw new Error("capture-id-missing");
+    if (seq !== this.startSeq || this.state !== "starting") {
+      // cancel() or a newer trigger ran while capture.start was in flight —
+      // stop the orphaned Engine session instead of leaving the capture slot
+      // busy forever.
+      await this.call("dictation.capture.stop", { captureId });
+      return;
+    }
     this.windowId = windowId;
     this.captureId = captureId;
     this.setState("capturing");
+    if (this.stopAfterStart) {
+      // PTT released before capture.start landed — finish immediately.
+      this.stopAfterStart = false;
+      await this.finishCapture();
+    }
   }
 
   private async finishCapture(): Promise<void> {
@@ -133,7 +168,15 @@ export class DictationWorker {
     const stopped = await this.call("dictation.capture.stop", { captureId });
     const audio = isObject(stopped.result) ? stopped.result : {};
     const audioB64 = typeof audio.audioB64 === "string" ? audio.audioB64 : null;
-    if (!audioB64) throw new Error("audio-missing");
+    if (audioB64 === null) throw new Error("audio-missing");
+    if (!audioB64) {
+      // Zero-length recording (e.g. PTT released before audio buffered) —
+      // nothing to transcribe; finish silently instead of raising an error.
+      this.captureId = null;
+      this.windowId = null;
+      this.setState("idle");
+      return;
+    }
     const transcription = await this.call("dictation.speech.transcribe", {
       audioB64,
       durationSec: typeof audio.durationMs === "number" ? Math.max(0, audio.durationMs) / 1000 : 0,
@@ -174,6 +217,20 @@ export class DictationWorker {
 
   private setState(state: string): void {
     this.state = state;
+  }
+
+  // The supervisor reaps a Running worker whose last_heartbeat is older than
+  // 60s — without these beats dictation dies a minute after every start.
+  private startHeartbeats(): void {
+    if (this.heartbeat !== null) return;
+    this.heartbeat = setInterval(() => {
+      this.emit({
+        method: "worker.heartbeat",
+        generation: this.generation,
+        token: this.token,
+      });
+    }, 15_000);
+    this.heartbeat.unref?.();
   }
 }
 
