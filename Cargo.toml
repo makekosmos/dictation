@@ -1,8 +1,9 @@
 [package]
 name = "dictation-gpui"
 version = "0.1.0"
+publish = false
 edition = "2021"
-description = "Kosmos Dictation — standalone GPUI overlay app over Engine RPC/WS (Vue dictation pill parity)"
+description = "Kosmos Dictation — standalone GPUI overlay app over Engine RPC/WS (Vue dictation pill parity retired, this crate is the shipped product, KOS-241)"
 default-run = "dictation-gpui"
 
 [dependencies]
@@ -35,3 +36,17 @@ overflow-checks = false
 
 [profile.release]
 debug = false
+
+# Ensure gpui's build.rs (not just the lib) sees debug_assertions=false so it
+# runs fxc and emits shaders_bytes.rs. Cargo's default release build-override
+# can leave assertions on for build scripts.
+[profile.release.build-override]
+debug-assertions = false
+opt-level = 0
+
+# Unconditional so build.rs can invoke embed_resource::compile unconditionally
+# once its CARGO_CFG_TARGET_OS check passes (target-gated deps would also
+# resolve for a Windows target, but the crate name would still need cfg-gated
+# code paths in build.rs on non-Windows builds).
+[build-dependencies]
+embed-resource = "3.0"

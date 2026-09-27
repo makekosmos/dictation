@@ -1,6 +1,2 @@
-node_modules/
-dist/
-release/
+/target/
 .tmp/
-worker/dictation-worker.exe
-gpui/target/
