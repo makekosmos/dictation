@@ -31,4 +31,20 @@ describe("Dictation settings surface", () => {
     expect(app).toContain(':disabled="!settingsLoaded"');
     expect(app).toMatch(/if \(!settingsLoaded\.value\)/);
   });
+
+  it("keeps a failed local-model list from failing the whole load", () => {
+    // list_local_models is advisory: on an Engine that lacks or fails the op
+    // the config still loaded, so the load error must not claim failure and
+    // the dropdown simply shows no local options.
+    const app = read("src/App.vue");
+    const load = app.slice(app.indexOf("async function load"));
+    const between = load.slice(
+      load.indexOf("settingsLoaded.value = true"),
+      load.indexOf("listLocalModels"),
+    );
+    // The get_config try/catch must be closed before the models fetch —
+    // sharing one try meant a models failure printed a bogus
+    // "Не удалось загрузить настройки" over an actually-loaded form.
+    expect(between).toContain("catch");
+  });
 });

@@ -1,3 +1,49 @@
+# KOS-247 reproduction artifacts (fourth pass — prepended)
+
+Independent reproductions captured BEFORE the fixes on `kos-247`. Base
+included all merged kos-172 + kos-193 + kos-220 + kos-237 fixes; these are
+NEW bugs. `cargo check`/`test`/`clippy` now run on Linux with the
+~/.rustup 1.95.0 toolchain (`RUST_FONTCONFIG_DLOPEN=1`), so the new
+`#[test]`s in app.rs are real gate coverage, not just sims.
+
+## A1 — `@action` success leaves the stale error banner (`gpui/src/app.rs`)
+
+`gpui-action-error-sim.rs` + `.txt` — logic sim of `handle_reply`'s "@action"
+arm. `self.error` is documented "banner until a retry succeeds" and the
+`dictation.pill.result` Ok arm already clears it, but the "@action" Ok arm
+only set `notice` — after e.g. a failed `dictation.update_config` the banner
+stayed up next to "Выполнено." forever. Fix: `self.error = None` on success.
+
+## A2 — `Ctrl++` accelerator loses its key (`gpui/src/app.rs`, `useDictationConfig.shared.ts`)
+
+`gpui-accelerator-sim.rs` + `.txt` — VK_OEM_PLUS (0xBB) mapped to "+", so
+Ctrl+= captured "Ctrl++": '+' is the accelerator delimiter, the key part is
+empty, and the pill footer's own `split('+')` shows only "Ctrl". Engine-side
+registration of "Ctrl++" cannot express the key. Fix: `0xBB → "Plus"`
+(Electron's name for the key), both ports. Regression: `cargo test`
+`accelerator_names_oem_plus` + `accelerator_rejects_unmapped_vk`, and
+vitest `tests/hotkeyAccelerator.test.ts` for the shared port.
+
+## A3 — `list_local_models` failure flagged the whole load failed (`src/App.vue`)
+
+`load-models-prefix.txt` — the settings-load regression check (a
+`settingsUi.test.ts` source assertion, house style) evaluated against the
+pre/post App.vue: `listLocalModels()` shared get_config's try, so a
+missing/failed models op printed "Не удалось загрузить настройки" over a
+form that had actually loaded — and every mount on an Engine without the op
+showed a permanent bogus error. Fix: the models fetch is isolated in its own
+try/catch; on failure the dropdown simply shows no local options.
+
+## A4 — Cancelled transcribe reply clobbers the last transcript card (`gpui/src/app.rs`)
+
+`gpui-cancelled-result-sim.rs` + `.txt` — logic sim of the
+`dictation.pill.result` arm. On `cancelled: true` the pill closed correctly
+but the stub was still written to `slots["dictation.result"]`, replacing the
+status window's real "Последняя расшифровка" card with an empty entry.
+Fix: the slot write now happens only for non-cancelled results.
+
+---
+
 # KOS-220 reproduction artifacts (third pass — prepended)
 
 Independent reproductions captured BEFORE the fixes on `kos-220`. Base
