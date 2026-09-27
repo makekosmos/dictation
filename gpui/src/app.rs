@@ -282,10 +282,15 @@ impl DictationApp {
                 }
             }
             None => {
-                self.send_command(Command::DictationCancel {
+                if !self.send_command(Command::DictationCancel {
                     slot: "dictation.pill.cancel".into(),
                     capture_id: None,
-                });
+                }) {
+                    self.fail_pill(
+                        "Соединение с Engine завершено. Перезапустите приложение.".into(),
+                        cx,
+                    );
+                }
             }
         }
         cx.notify();
