@@ -1,0 +1,9 @@
+=== stale dictation.pill.start cleanup (Ok reply, orphan C1) ===
+  pre-fix        -> ops=[CaptureStop("cap-C1"), DictationCancel]  contract_token=None  prev_hwnd=false  sidecar=false
+  post-fix       -> ops=[CaptureStop("cap-C1")]  contract_token=Some("w-77")  prev_hwnd=true  sidecar=true
+
+=== stale dictation.pill.start cleanup (Err reply, NO orphan) ===
+  pre-fix        -> ops=[DictationCancel]  contract_token=None  prev_hwnd=false  sidecar=false
+  post-fix       -> ops=[]  contract_token=Some("w-77")  prev_hwnd=true  sidecar=true
+
+post-fix: orphan stopped by id; no dictation.cancel side-effects
