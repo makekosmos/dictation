@@ -4028,7 +4028,7 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 [[package]]
 name = "mundus-gpui-kit"
 version = "0.2.0"
-source = "git+https://github.com/makekosmos/kosmos-gpui-kit?rev=ff8edf8423ff83c39d9b7c3498f86fd0141d848a#ff8edf8423ff83c39d9b7c3498f86fd0141d848a"
+source = "git+https://github.com/makekosmos/kosmos-gpui-kit?rev=28b3f419c7d5a957d6cd83a7ae4b64a9a12c07bb#28b3f419c7d5a957d6cd83a7ae4b64a9a12c07bb"
 dependencies = [
  "gpui-component",
  "gpui-kit",
