@@ -1,0 +1,174 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 21 * * *' # 00:00 Moscow (UTC+3)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'release' || github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.plan.outputs.sha || steps.source.outputs.sha }}
+      version: ${{ steps.plan.outputs.version }}
+      release: ${{ steps.plan.outputs.release }}
+      previous_tag: ${{ steps.plan.outputs.previous_tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release branch
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Test version rules
+        run: python scripts/test_release.py
+      - name: Plan release
+        id: plan
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release.py plan
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.release != 'false'
+    name: Build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - os: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      BUILD_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Apply release version
+        if: needs.prepare.outputs.release == 'true'
+        run: python scripts/release.py set "$RELEASE_VERSION"
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+          rustup target add "$BUILD_TARGET"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          workspaces: gpui
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev libvulkan1
+      - name: macOS Metal compiler
+        if: runner.os == 'macOS'
+        run: |
+          if ! xcrun --find metal; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+      - name: Formatting
+        run: cargo fmt --manifest-path gpui/Cargo.toml -- --check
+      - name: Clippy (same warning baseline as agenda-gpui)
+        if: runner.os == 'Windows'
+        run: >-
+          cargo clippy --locked --manifest-path gpui/Cargo.toml --all-targets --all-features
+          -- -D warnings -A dead_code
+          -A clippy::option_map_unit_fn -A clippy::map_flatten -A clippy::nonminimal_bool
+          -A clippy::type_complexity -A clippy::collapsible_if -A clippy::let_and_return
+          -A clippy::result_large_err -A clippy::duplicated_attributes -A clippy::useless_conversion
+          -A clippy::panic -A clippy::assertions_on_constants
+      - name: Tests
+        run: cargo test --locked --release --manifest-path gpui/Cargo.toml --all-features --target "$BUILD_TARGET"
+      - name: Release build
+        run: cargo build --locked --release --bin dictation-gpui --manifest-path gpui/Cargo.toml --target "$BUILD_TARGET"
+      - name: Package
+        run: python scripts/release.py package "$BUILD_TARGET"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dictation-gpui-${{ matrix.target }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: read
+    env:
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.sha }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      GH_TOKEN: ${{ github.token }}
+      PREVIOUS_TAG: ${{ needs.prepare.outputs.previous_tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dictation-gpui-*
+          merge-multiple: true
+          path: dist
+      - name: Commit version and tag the tested source
+        run: bash scripts/publish-version.sh
+      - name: Publish all platforms together
+        run: |
+          tag="gpui-v$RELEASE_VERSION"
+          cd dist
+          sha256sum *.zip *.tar.gz > SHA256SUMS.txt
+          cd ..
+          if gh release view "$tag" --json isDraft > release-state.json; then
+            python -c 'import json; assert json.load(open("release-state.json"))["isDraft"], "Release already published"'
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* --verify-tag --draft --title "Dictation GPUI $tag" --generate-notes
+          fi
+          gh release edit "$tag" --draft=false --latest
