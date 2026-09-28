@@ -19,7 +19,10 @@ fn trigger_label(mode: &str) -> &'static str {
 
 fn state_label(state: &str) -> &'static str {
     match state {
-        "recording" => "Запись",
+        // The dotted contract spells the live state "capturing"
+        // (state_broadcast_ended parity) — it must not fall through to
+        // "Готов" while a capture is actually running.
+        "recording" | "capturing" => "Запись",
         "transcribing" => "Распознаю",
         "waiting" => "Жду сеть",
         "error" => "Ошибка",
@@ -61,7 +64,7 @@ impl Render for DictationApp {
                 .child({
                     let s = vstr(&state, "state");
                     let color = match s.as_str() {
-                        "recording" => DESTRUCTIVE(),
+                        "recording" | "capturing" => DESTRUCTIVE(),
                         "transcribing" | "waiting" => WARN(),
                         "error" => DESTRUCTIVE(),
                         _ => SUCCESS(),
@@ -129,9 +132,14 @@ impl Render for DictationApp {
                     .text_color(c(MUTED_FG()))
                     .child("Горячая клавиша:")
                     .children(
+                        // pill.rs footer parity: drop empty parts — a stored
+                        // "Ctrl++" (legacy VK_OEM_PLUS capture or a typed
+                        // value) must not render ghost chips.
                         hotkey
                             .split('+')
-                            .map(|p| crate::pill_wave::kbd(p.trim().to_string())),
+                            .map(|p| p.trim())
+                            .filter(|p| !p.is_empty())
+                            .map(|p| crate::pill_wave::kbd(p.to_string())),
                     ),
             );
         }
@@ -266,7 +274,7 @@ impl Render for DictationApp {
             }
             let ms = vnum(&result, "durationMs");
             if ms > 0.0 {
-                meta.push(format!("запись {}", fmt_ms(ms)));
+                meta.push(format!("запись {}", fmt_duration(ms)));
             }
             if !meta.is_empty() {
                 card_el = card_el.child(
@@ -466,6 +474,18 @@ fn caption_btn(label: &'static str, area: WindowControlArea, danger: bool) -> St
         .child(label)
 }
 
+/// Recording length for the "Последняя расшифровка" card — m:ss (h:mm:ss
+/// past an hour). `fmt_ms` from the kit formats relative TIMES ("5 мин.
+/// назад"), so applying it to a duration printed "запись 2 мин. назад".
+fn fmt_duration(ms: f64) -> String {
+    let secs = (ms / 1000.0).round().max(0.0) as u64;
+    if secs >= 3600 {
+        format!("{}:{:02}:{:02}", secs / 3600, secs % 3600 / 60, secs % 60)
+    } else {
+        format!("{}:{:02}", secs / 60, secs % 60)
+    }
+}
+
 /// Segmented-option chip (idle-unload selector) — small clickable token,
 /// highlighted when `selected`.
 fn seg_opt(id: &str, label: &'static str, selected: bool) -> Stateful<Div> {
@@ -483,5 +503,30 @@ fn seg_opt(id: &str, label: &'static str, selected: bool) -> Stateful<Div> {
         el.bg(fade(FG(), 0.08))
             .text_color(fade(FG(), 0.75))
             .hover(|s| s.bg(fade(FG(), 0.14)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fmt_duration, state_label};
+
+    /// A duration is not a relative time: fmt_ms would print "запись 2 мин.
+    /// назад" for a 90s take — the card must show clock-style length.
+    #[test]
+    fn duration_formats_as_clock() {
+        assert_eq!(fmt_duration(1_250.0), "0:01");
+        assert_eq!(fmt_duration(5_000.0), "0:05");
+        assert_eq!(fmt_duration(90_000.0), "1:30");
+        assert_eq!(fmt_duration(3_725_000.0), "1:02:05");
+        assert_eq!(fmt_duration(0.0), "0:00");
+    }
+
+    /// The dotted contract spells the live state "capturing" — it must render
+    /// "Запись", not fall through to the green "Готов" badge mid-capture.
+    #[test]
+    fn capturing_is_recording() {
+        assert_eq!(state_label("capturing"), "Запись");
+        assert_eq!(state_label("recording"), "Запись");
+        assert_eq!(state_label("idle"), "Готов");
     }
 }

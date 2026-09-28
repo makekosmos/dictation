@@ -1,0 +1,4 @@
+PRE-FIX  state "capturing" → badge "Готов" (green) — capture is live!
+POST-FIX state "capturing" → badge "Запись"
+PRE-FIX  hotkey "Ctrl++" → chips ["Ctrl", "", ""] (empty ghost chips)
+POST-FIX hotkey "Ctrl++" → chips ["Ctrl"]
