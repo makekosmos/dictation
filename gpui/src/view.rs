@@ -7,8 +7,8 @@ use serde_json::json;
 
 use crate::app::DictationApp;
 use crate::pill::PillPhase;
-use kosmos_gpui_kit::fields::*;
-use kosmos_gpui_kit::theme::*;
+use mundus_gpui_kit::fields::*;
+use mundus_gpui_kit::theme::*;
 
 fn trigger_label(mode: &str) -> &'static str {
     match mode {
@@ -314,7 +314,7 @@ impl Render for DictationApp {
                                     .text_size(px(12.))
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(fade(FG(), 0.9))
-                                    .child("Kosmos Dictation"),
+                                    .child("Mundus Dictation"),
                             ),
                     )
                     .child(caption_btn("–", WindowControlArea::Min, false))

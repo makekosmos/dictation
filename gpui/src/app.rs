@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use crate::pill::{DictationPill, PillDelivery, PillPhase};
 use crate::worker::{Command, Worker};
 
-pub use kosmos_gpui_kit::fields::Slot;
+pub use mundus_gpui_kit::fields::Slot;
 
 pub struct DictationApp {
     worker: Worker,
@@ -35,6 +35,9 @@ pub struct DictationApp {
     /// in `--background` (autostart) mode until the window is requested.
     status: Option<AnyWindowHandle>,
     /// HKCU Run entry `KosmosDictation` present → launch at Windows sign-in.
+    /// The value name is a persisted identifier and stays `KosmosDictation`
+    /// across the Mundus rename — renaming it would orphan the entry that
+    /// existing installs already carry.
     autostart: bool,
     /// Session phase shared by the pill and the status window.
     pub phase: Option<PillPhase>,
@@ -72,7 +75,12 @@ impl DictationApp {
     /// In `--background` (autostart) mode the window is created hidden
     /// (`show: false`) — same entity, nothing on screen.
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let data_dir = kosmos_gpui_kit::engine::data_dir().ok();
+        // `None` data_dir = the kit's Engine client re-runs discovery on
+        // every call (MUNDUS_DATA_DIR → legacy env → config/Mundus →
+        // config/Kosmos). Dictation can outlive an Engine restart or start
+        // before it at sign-in, and the lock may sit in either dir while an
+        // install moves over — a startup snapshot would pin the wrong one.
+        let data_dir = None;
         // Closing the only window would drop this entity — the worker, the
         // Engine subscription and the hotkey flow with it. Intercept close:
         // minimize instead (same affordance as tray apps — dictation keeps
@@ -317,7 +325,7 @@ impl DictationApp {
     fn dictation_hotkey(&self) -> String {
         self.data("dictation.state")
             .get("config")
-            .map(|c| kosmos_gpui_kit::fields::vstr(c, "hotkey"))
+            .map(|c| mundus_gpui_kit::fields::vstr(c, "hotkey"))
             .filter(|h| !h.is_empty())
             .unwrap_or_else(|| "Ctrl+Shift+;".into())
     }
@@ -405,8 +413,8 @@ impl DictationApp {
 
     /// Toggle the HKCU Run entry — `--background` starts the app silently
     /// (no window) at Windows sign-in. Enabling also registers Engine
-    /// (`engine.autostart.set` → `kepler-backend --start`): dictation at
-    /// sign-in is useless without Engine up.
+    /// autostart via `engine.autostart.set`: dictation at sign-in is
+    /// useless without Engine up.
     pub fn set_autostart(&mut self, on: bool, cx: &mut Context<Self>) {
         if crate::set_autostart(on) {
             self.autostart = on;
@@ -816,8 +824,8 @@ fn install_should_close(window: &mut Window, cx: &App) {
     });
 }
 
-/// Exposes the named data slots to `kosmos_gpui_kit::fields::slot_or`.
-impl kosmos_gpui_kit::fields::Slots for DictationApp {
+/// Exposes the named data slots to `mundus_gpui_kit::fields::slot_or`.
+impl mundus_gpui_kit::fields::Slots for DictationApp {
     fn slot(&self, key: &str) -> Option<&Slot> {
         self.slots.get(key)
     }

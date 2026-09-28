@@ -1,6 +1,6 @@
 # Dictation
 
-Standalone GPUI dictation app for Kosmos Engine (`gpui/`, crate
+Standalone GPUI dictation app for Mundus Engine (`gpui/`, crate
 `dictation-gpui`). It owns the status window, the pill overlay, hotkey capture
 and the settings UI, and talks to the Engine directly over RPC/WS
 (`dictation.capture.*`, `dictation.speech.transcribe`, `dictation.cancel`, the

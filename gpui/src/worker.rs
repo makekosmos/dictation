@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 use std::sync::mpsc::{Receiver, Sender};
 
-use kosmos_gpui_kit::engine::Engine;
+use mundus_gpui_kit::engine::Engine;
 
 pub enum Command {
     /// POST /v1/rpc — `slot` routes the reply into `DictationApp::slots`.

@@ -1,6 +1,6 @@
-//! dictation-gpui — standalone Kosmos Dictation overlay app. All native work
+//! dictation-gpui — standalone Mundus Dictation overlay app. All native work
 //! (global hotkey hook, WASAPI capture, transcription, injection) is owned by
-//! Kosmos Engine; this process is the UI client over /v1/rpc + the Engine
+//! Mundus Engine; this process is the UI client over /v1/rpc + the Engine
 //! broadcast WebSocket (dictation_toggle_trigger → pill session).
 #![windows_subsystem = "windows"]
 
@@ -41,6 +41,8 @@ pub(crate) static SHOW_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// mutex handle intentionally leaks for the process lifetime. A second launch
 /// signals `Local\KosmosDictationGpuiShow` so the running instance reopens
 /// its (possibly minimized) status window, then exits quietly.
+/// The mutex/event names stay `Kosmos*` across the Mundus rename — renamed
+/// names would let a legacy and a Mundus instance run side by side.
 #[cfg(windows)]
 fn claim_single_instance() -> bool {
     use std::sync::atomic::Ordering;
@@ -84,9 +86,10 @@ fn claim_single_instance() -> bool {
 
 fn main() {
     // Headless app with no console — without this a panic dies silently.
-    // Writes to %APPDATA%\Kosmos\dictation-gpui-panic.log.
+    // Writes to <data dir>\dictation-gpui-panic.log — %APPDATA%\Mundus by
+    // default, the legacy %APPDATA%\Kosmos dir when discovery falls back.
     std::panic::set_hook(Box::new(|info| {
-        if let Ok(dir) = kosmos_gpui_kit::engine::data_dir() {
+        if let Ok(dir) = mundus_gpui_kit::engine::data_dir() {
             let _ = std::fs::write(
                 dir.join("dictation-gpui-panic.log"),
                 format!("{info}\n\n{:?}", std::backtrace::Backtrace::capture()),
@@ -118,7 +121,7 @@ fn main() {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     titlebar: Some(gpui::TitlebarOptions {
-                        title: Some(SharedString::from("Kosmos Dictation")),
+                        title: Some(SharedString::from("Mundus Dictation")),
                         appears_transparent: true,
                         traffic_light_position: Some(gpui::point(px(12.), px(14.))),
                     }),
@@ -141,13 +144,15 @@ fn main() {
         });
 }
 
-// --- Windows autostart (HKCU\...\Run\KosmosDictation) -------------------------
+// --- Windows autostart (HKCU\...\Run\KosmosDictation — persisted name) ------
 
 // Only consumed by the #[cfg(windows)] fns below — gate the constants too or
 // cargo check/clippy on a non-Windows host flags them as dead code.
 #[cfg(windows)]
 const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 #[cfg(windows)]
+// Persisted registry value name — kept as-is across the Mundus rename so the
+// entry existing installs carry is updated in place instead of orphaned.
 const RUN_VALUE: &str = "KosmosDictation";
 
 /// Whether the Run entry exists (any value — we don't police the path).
