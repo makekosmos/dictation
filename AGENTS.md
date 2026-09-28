@@ -2,18 +2,18 @@
 
 ## Scope and entry points
 
-Marketplace Dictation UI packaged for Cortex.
+Standalone GPUI dictation app for Kosmos Engine. The legacy Vue `.kspkg`
+package was retired (removed in this change); only the Rust crate ships.
 
-> Status (2026-09-24, repo-split decision): the Dictation UI is moving INTO
-> Cortex as a GPUI module of the unified application (manager-gpui). This
-> packaged Vue UI is being phased out — treat the repo as frozen for new
-> feature work until the transition completes.
+- `gpui/`: the `dictation-gpui` crate — status window, pill overlay, hotkey
+  capture, settings UI. `gpui/src/worker.rs` holds the blocking Engine calls
+  on a worker thread; `gpui/src/app.rs` owns the state machine.
+- `scripts/release.py`, `scripts/publish-version.sh`,
+  `scripts/test_release.py`: `gpui-vX.Y.Z` versioning, packaging and
+  publication used by `.github/workflows/build.yml`.
+- `artifacts/`: historical reproduction notes; reference only, not a gate.
 
-- `src/`: renderer UI and scoped host-operation requests.
-- `manifest.json`, `package.manifest.json`, `compatibility.json`: identity, six operations and migration contract.
-- `tests/`, `scripts/`: Vitest checks, manifest validation and package smoke.
-
-Read README, current package scripts, relevant tests and any nested AGENTS.md first.
+Read README, relevant `gpui/src` code and any nested AGENTS.md first.
 Check current git status and task/PR revision; preserve unrelated changes.
 Use current implementation as evidence, not old issue descriptions.
 
@@ -23,22 +23,36 @@ Run from this repository root. Prefix shell commands with `rtk`; use `rtk proxy`
 when unfiltered output is needed. Do not bypass hooks to obtain a green result.
 
 ```powershell
-rtk bun install --frozen-lockfile
-rtk bun run check
+rtk cargo fmt --manifest-path gpui/Cargo.toml -- --check
+rtk cargo clippy --locked --manifest-path gpui/Cargo.toml --all-targets --all-features -- -D warnings
+rtk cargo test --locked --manifest-path gpui/Cargo.toml --all-features
+rtk python scripts/test_release.py
 ```
 
-- Use Bun 1.3.14 from `packageManager`. Full check includes tests, build and `.kspkg` smoke.
-- Output: `release/dictation-<version>.kspkg`. Keep package versions synchronized through existing validation.
+- Git hooks: `hk.pkl` (hk, same tool as agenda-gpui) — `hk install`; pre-commit
+  runs fmt + check, pre-push/`hk check` runs clippy, tests and the release-rule
+  checks.
+- The clippy warning baseline (`-A` list) must stay identical to `build.yml`'s
+  Windows clippy step and agenda-gpui.
+- Version source of truth: `gpui/Cargo.toml`. Release tags are `gpui-vX.Y.Z`;
+  the legacy kspkg `vX.Y.Z` line belongs to already-published releases and is
+  never reused or modified.
 
 ## Contracts to preserve
 
-- Request only the six manifest-scoped `dictation.*` operations.
-- Microphone, hotkeys, overlay lifecycle, credentials, transcription and text injection remain in Cortex; do not implement renderer bypasses.
-- Preserve legacy Dictation identity, permissions, credentials, settings and speech assets through bounded 0.x compatibility.
-- App mocks do not prove native microphone/hotkey/permission acceptance. Hand off exact package SHA and required native scenarios to the Cortex owner.
-
-- Preserve existing UI language; reuse Imago tokens/components and preserve keyboard navigation, focus behavior and accessible names.
-- Clean up listeners, timers and subscriptions on disposal. Verify visual changes in the running UI, or report UI verification NOT_RUN with its reason.
+- The app reaches the Engine only through `kosmos-gpui-kit`'s `Engine` RPC/WS
+  client (`dictation.capture.*`, `dictation.speech.transcribe`,
+  `dictation.cancel`, `dictation.*` config/state ops). Microphone, hotkeys,
+  overlay injection, credentials, transcription providers and text insertion
+  stay in cortex `runtime/src/dictation/`; do not implement app-side bypasses.
+- cortex's Windows installer build pins this repo
+  (`desktop/component-pins.json`, `dictation_gpui`) and builds the crate from a
+  sibling checkout; coordinate layout changes with the cortex owner.
+- Preserve existing UI language (Russian strings); reuse Imago/kosmos-gpui-kit
+  tokens/components and preserve keyboard navigation, focus behavior and
+  accessible names.
+- Clean up listeners, timers and subscriptions on disposal. Verify visual
+  changes in the running UI, or report UI verification NOT_RUN with its reason.
 
 ## Parallel work
 
@@ -53,7 +67,7 @@ rtk bun run check
 
 - Prefer existing code and tools; avoid unrelated cleanup and new abstractions. Trace callers before fixing a shared bug.
 - Add the smallest meaningful regression check for changed nontrivial behavior; include failure paths for permissions, migrations or persistence.
-- For code, manifest or dependency changes, run relevant checks during work and the full gate on the integrated revision. Documentation-only edits need path/command and diff checks, not an application rebuild.
+- For code or dependency changes, run relevant checks during work and the full gate on the integrated revision. Documentation-only edits need path/command and diff checks, not an application rebuild.
 - For nontrivial work, use an independent Luna review of the integrated revision.
 - Report exact SHA (and dirty diff if applicable), dependency revisions, commands and PASS / FAIL / NOT_RUN with reasons. Never claim a missing native or external check passed.
 - Follow the current organization quality contract; CI absence is not evidence of failure or success, and local checks do not bypass protected-branch rules.
