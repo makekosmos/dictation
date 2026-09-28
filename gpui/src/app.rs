@@ -54,6 +54,11 @@ pub struct DictationApp {
     /// in flight — the session is finished the moment its reply arrives
     /// (worker.ts `stopAfterStart` parity).
     finish_after_start: bool,
+    /// The last captureId WE ended (cancel/finish/orphan stop). Its
+    /// `dictation_audio_level` frames still drain after our stop command
+    /// lands — without this tombstone a straggler re-adopts the dead
+    /// capture and pops the pill back open on "Идёт запись".
+    ended_capture: Option<String>,
     last_duration_ms: f64,
     /// Live mic RMS levels (`dictation_audio_level` WS events) — the pill's
     /// waveform ring buffer, last 120 samples like the Vue pill history.
@@ -93,6 +98,7 @@ impl DictationApp {
             capture: None,
             capture_adopted: false,
             finish_after_start: false,
+            ended_capture: None,
             last_duration_ms: 0.0,
             levels: VecDeque::new(),
             hotkey_capturing: false,
@@ -222,6 +228,9 @@ impl DictationApp {
         self.finish_after_start = false;
         self.session += 1;
         let capture_id = self.capture.take();
+        if capture_id.is_some() {
+            self.ended_capture = capture_id.clone();
+        }
         self.capture_adopted = false;
         self.send_command(Command::DictationCancel {
             slot: "dictation.pill.cancel".into(),
@@ -277,6 +286,7 @@ impl DictationApp {
         self.capture_adopted = false;
         match self.capture.take() {
             Some(capture_id) => {
+                self.ended_capture = Some(capture_id.clone());
                 // A dead worker channel must not freeze the pill on
                 // "Распознаю" forever — surface the failure like a refused
                 // Engine op (delivery Failed + timed close).
@@ -497,6 +507,7 @@ impl DictationApp {
                         .and_then(Value::as_str)
                         .map(str::to_string)
                 }) {
+                    self.ended_capture = Some(capture_id.clone());
                     self.send_command(Command::DictationStop {
                         slot: "dictation.pill.orphan_stop".into(),
                         capture_id,
@@ -515,6 +526,9 @@ impl DictationApp {
                     // Cancel during Starting: the pill is already gone —
                     // stop the just-started session instead of resurrecting.
                     if self.phase.is_none() {
+                        if capture_id.is_some() {
+                            self.ended_capture = capture_id.clone();
+                        }
                         self.send_command(Command::DictationCancel {
                             slot: "dictation.pill.cancel".into(),
                             capture_id,
@@ -639,13 +653,20 @@ impl DictationApp {
                 cx.notify();
             }
         }
+        // A reply always mutates something the status window renders (slot
+        // data, the error banner, phase). gpui repaints only on notify() —
+        // arms that skipped it (notably "@action" Err and fail_pill) left a
+        // failed click painting the old frame until an unrelated event.
+        cx.notify();
     }
 
     /// Vue pill parity: показать ошибку в overlay, а не мгновенно закрыть
     /// (delivery=failed → 4.5s linger).
     fn fail_pill(&mut self, error: String, cx: &mut Context<Self>) {
         self.phase = Some(PillPhase::Processing);
-        self.capture = None;
+        if let Some(id) = self.capture.take() {
+            self.ended_capture = Some(id);
+        }
         self.capture_adopted = false;
         self.delivery = Some(PillDelivery::Failed);
         self.schedule_pill_close(cx);
@@ -696,6 +717,7 @@ impl DictationApp {
                         .get("captureId")
                         .and_then(Value::as_str)
                         .map(str::to_string)
+                        .filter(|id| should_adopt_capture(self.ended_capture.as_deref(), id))
                     {
                         self.session += 1;
                         self.delivery = None;
@@ -747,7 +769,7 @@ impl DictationApp {
                     && self.capture_adopted
                 {
                     self.phase = None;
-                    self.capture = None;
+                    self.ended_capture = self.capture.take();
                     self.capture_adopted = false;
                     self.delivery = None;
                     self.close_pill(cx);
@@ -787,6 +809,14 @@ impl DictationApp {
 /// missing `state` field carries no information.
 fn state_broadcast_ended(state: Option<&str>) -> bool {
     matches!(state, Some(s) if s != "recording" && s != "capturing")
+}
+
+/// Should an idle-phase `dictation_audio_level` event adopt its captureId?
+/// Straggler frames of a capture WE just ended (cancelled/finished — the stop
+/// lands on Engine asynchronously) must not reopen the pill, and a malformed
+/// event without an id would adopt a session we could never stop.
+fn should_adopt_capture(ended_capture: Option<&str>, capture_id: &str) -> bool {
+    !capture_id.is_empty() && ended_capture != Some(capture_id)
 }
 
 /// Unhide a `show: false` / minimized window, then activate it. GPUI's
@@ -881,7 +911,7 @@ fn vk_to_key_name(vk: u32) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_accelerator, state_broadcast_ended, vk_to_key_name};
+    use super::{build_accelerator, should_adopt_capture, state_broadcast_ended, vk_to_key_name};
     use serde_json::{json, Value};
 
     /// Adopted-session retirement: only a named non-recording broadcast ends
@@ -896,6 +926,19 @@ mod tests {
             assert!(!state_broadcast_ended(Some(live)), "{live}");
         }
         assert!(!state_broadcast_ended(None));
+    }
+
+    /// Level frames of a capture we just ended (cancel/finish stop still in
+    /// flight on the worker channel) must not re-adopt the dead session and
+    /// pop the pill back open; a foreign capture id still adopts.
+    #[test]
+    fn adoption_skips_ended_capture() {
+        assert!(!should_adopt_capture(Some("cap-1"), "cap-1"));
+        assert!(should_adopt_capture(Some("cap-1"), "cap-foreign"));
+        assert!(should_adopt_capture(None, "cap-1"));
+        // A malformed event with an empty captureId would adopt a session we
+        // could never stop (stop needs the id) — reject it.
+        assert!(!should_adopt_capture(None, ""));
     }
 
     /// VK_OEM_PLUS must produce the named accelerator token "Plus" — '+' is
