@@ -1,3 +1,65 @@
+# KOS-256 reproduction artifacts (fifth pass — prepended)
+
+Independent reproductions captured BEFORE the fixes on `kos-256`. Base
+included all merged kos-172 + kos-193 + kos-220 + kos-237 + kos-247 fixes;
+these are NEW bugs. `cargo test`/`clippy`/`fmt` run on the ~/.rustup 1.95.0
+toolchain (`RUST_FONTCONFIG_DLOPEN=1`), so the new `#[test]`s in app.rs and
+view.rs are real gate coverage, not just sims.
+
+## N1 — Reply mutations that never repaint (`gpui/src/app.rs`)
+
+`gpui-notify-sim.rs` + `.txt` — `gpui::Context::notify()` is the ONLY
+invalidation channel: `Entity::update` does not auto-notify observers
+(verified against the gpui-kit 0.6.2 source). `handle_reply` mutated
+`DictationApp` in several arms — notably the "@action" Err arm
+(`self.error = …`) and `fail_pill` (phase→Processing, delivery→Failed) —
+without a single `cx.notify()`. A failed click in the status window wrote
+the banner text but repainted nothing until an unrelated event arrived;
+a pill failure kept painting the old frame until the next level tick.
+Fix: one final `cx.notify()` at the end of `handle_reply` (idempotent —
+explicit notifies earlier in the match remain).
+
+## D1 — Recording length rendered as a relative time (`gpui/src/view.rs`)
+
+`gpui-duration-sim.rs` + `.txt` — the "Последняя расшифровка" card passed
+`durationMs` to the kit's `fmt_ms`, which formats elapsed TIMESTAMPS as
+relative phrases: a 90 s take printed "запись 2 мин. назад", a 1 h take
+"запись 1 ч. назад". Fix: `fmt_duration()` formats clock length — `m:ss`
+(`h:mm:ss` past an hour). Regression: `view::tests::duration_formats_as_clock`.
+
+## R1 — Straggler level event re-adopts a just-ended capture (`gpui/src/app.rs`)
+
+`gpui-readopt-sim.rs` + `.txt` — `capture.stop`/`dictation.cancel` reach
+Engine asynchronously on the worker channel, but the WS events channel can
+still hold `dictation_audio_level` frames produced before the stop landed.
+The adoption arm (idle phase + captureId present → open pill as Recording)
+accepted ANY id, so a drained straggler for the capture WE just ended
+popped the pill back open on "Идёт запись" — and a trigger press in that
+window called `dictation_finish` on an id Engine already dropped → bogus
+"Не доставлено" for a user who pressed Отмена. Fix: `ended_capture`
+tombstone set on every path that ends a session (cancel, finish, orphan
+stop, start-reply-after-close, `fail_pill`, adopted-session retirement);
+`should_adopt_capture` rejects the tombstoned id and empty ids while still
+adopting foreign captures. Regression: `app::tests::adoption_skips_ended_capture`.
+
+## S1 — "capturing" state renders green "Готов" + empty hotkey chips (`gpui/src/view.rs`)
+
+`gpui-state-label-sim.rs` + `.txt` — two presentation defects, same view:
+
+1. Engine's dotted state contract spells the live state `"capturing"`
+   (`state_broadcast_ended` in app.rs already treats both spellings), but
+   `state_label` and the badge-color match only knew `"recording"` — a live
+   capture showed the green "Готов" (ready) badge. Fix: both matches take
+   `"recording" | "capturing"`.
+2. The hotkey row did `split('+')` without dropping empty parts, so a
+   stored/legacy `"Ctrl++"` (produced before the KOS-247 `Plus` mapping)
+   rendered `["Ctrl", "", ""]` — two ghost chips. Fix: trim + filter empty
+   (pill.rs footer parity).
+
+Regression: `view::tests::capturing_is_recording`.
+
+---
+
 # KOS-247 reproduction artifacts (fourth pass — prepended)
 
 Independent reproductions captured BEFORE the fixes on `kos-247`. Base
