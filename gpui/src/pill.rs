@@ -12,7 +12,7 @@ use crate::pill_wave::{
     hint_button, kbd, paint_wave, Wave, DELIVERY_PASTED, WAVE_ERROR, WAVE_RECORDING, WAVE_WAITING,
 };
 pub use crate::pill_wave::{open, PillDelivery, PillPhase};
-use kosmos_gpui_kit::theme::*;
+use mundus_gpui_kit::theme::*;
 
 /// Vue pill body is 380x126 (`dictation-pill.ts` PILL_WIDTH/PILL_HEIGHT).
 pub(crate) const PILL_W: f32 = 380.;

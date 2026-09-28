@@ -2,7 +2,7 @@
 
 ## Scope and entry points
 
-Standalone GPUI dictation app for Kosmos Engine. The legacy Vue `.kspkg`
+Standalone GPUI dictation app for Mundus Engine. The legacy Vue `.kspkg`
 package was retired (removed in this change); only the Rust crate ships.
 
 - `gpui/`: the `dictation-gpui` crate — status window, pill overlay, hotkey
@@ -40,7 +40,7 @@ rtk python scripts/test_release.py
 
 ## Contracts to preserve
 
-- The app reaches the Engine only through `kosmos-gpui-kit`'s `Engine` RPC/WS
+- The app reaches the Engine only through `mundus-gpui-kit`'s `Engine` RPC/WS
   client (`dictation.capture.*`, `dictation.speech.transcribe`,
   `dictation.cancel`, `dictation.*` config/state ops). Microphone, hotkeys,
   overlay injection, credentials, transcription providers and text insertion
@@ -48,7 +48,7 @@ rtk python scripts/test_release.py
 - cortex's Windows installer build pins this repo
   (`desktop/component-pins.json`, `dictation_gpui`) and builds the crate from a
   sibling checkout; coordinate layout changes with the cortex owner.
-- Preserve existing UI language (Russian strings); reuse Imago/kosmos-gpui-kit
+- Preserve existing UI language (Russian strings); reuse Imago/mundus-gpui-kit
   tokens/components and preserve keyboard navigation, focus behavior and
   accessible names.
 - Clean up listeners, timers and subscriptions on disposal. Verify visual

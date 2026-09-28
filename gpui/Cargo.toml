@@ -2,7 +2,7 @@
 name = "dictation-gpui"
 version = "0.1.0"
 edition = "2021"
-description = "Kosmos Dictation — standalone GPUI overlay app over Engine RPC/WS (Vue dictation pill parity)"
+description = "Mundus Dictation — standalone GPUI overlay app over Engine RPC/WS (Vue dictation pill parity)"
 default-run = "dictation-gpui"
 
 [dependencies]
@@ -12,8 +12,10 @@ gpui-component = "=0.6.2"
 # crates/imago-gpui inside the imago repo workspace.
 imago-gpui = { git = "https://github.com/makekosmos/imago.git", rev = "b9dd284e70a56a151b525626c3b2463679cb8c9a" }
 # Shared GPUI surface (theme/widgets/fields/engine). Its gpui/imago-gpui
-# specs must stay identical to cortex manager-gpui's.
-kosmos-gpui-kit = { git = "https://github.com/makekosmos/kosmos-gpui-kit", rev = "b5f9b931cc4aff7aa248c88d6719569a1bd97fce" }
+# specs must stay identical to cortex manager-gpui's. The crate is renamed
+# mundus-gpui-kit in 0.10.0; the repo URL keeps the old name until the
+# makekosmos org is renamed (GitHub redirects).
+mundus-gpui-kit = { git = "https://github.com/makekosmos/kosmos-gpui-kit", rev = "eadede171ddab5742f8565305d03110abdfa13ff" }
 serde_json = "1.0.151"
 raw-window-handle = "0.6"
 windows-sys = { version = "0.61.2", features = [
@@ -35,3 +37,7 @@ overflow-checks = false
 
 [profile.release]
 debug = false
+
+# Windows exe icon: build.rs compiles windows/app.rc (1 ICON app.ico).
+[target.'cfg(target_os = "windows")'.build-dependencies]
+embed-resource = "3.0"

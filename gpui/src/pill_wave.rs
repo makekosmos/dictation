@@ -5,7 +5,7 @@ use ::gpui::{prelude::*, *};
 
 use crate::app::DictationApp;
 use crate::pill::{DictationPill, BOTTOM_MARGIN, PILL_H, PILL_W};
-use kosmos_gpui_kit::theme::*;
+use mundus_gpui_kit::theme::*;
 
 /// dictation-pill-waveform.ts constants (history 120 lives on `DictationApp`).
 const WAVE_BAR_W: f32 = 4.;
