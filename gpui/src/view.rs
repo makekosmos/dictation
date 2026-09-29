@@ -215,19 +215,7 @@ impl Render for DictationApp {
             }
             unload_row = unload_row.child(opts);
             card_el = card_el.child(unload_row);
-            card_el = card_el.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(kv("Автозапуск", "с входом в Windows"))
-                    .child(toggle(
-                        "dict-autostart",
-                        self.autostart(),
-                        cx,
-                        |this, on, cx| this.set_autostart(on, cx),
-                    )),
-            );
+
             if let Some(err) = vopt(&state, "lastError") {
                 card_el = card_el.child(kv("Последняя ошибка", err));
             }
@@ -285,8 +273,8 @@ impl Render for DictationApp {
         // Native-feel titlebar (Agenda pattern): the strip is a
         // WindowControlArea::Drag region (HTCAPTION → native move/snap), the
         // trailing controls are platform hitboxes — Windows handles press,
-        // snap flyout and the close button; our should-close hook turns it
-        // into minimize so dictation keeps running.
+        // snap flyout and the close button; close destroys the window while
+        // the worker keeps dictation running.
         div()
             .size_full()
             .flex()

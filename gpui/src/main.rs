@@ -13,9 +13,7 @@ mod worker;
 
 use std::sync::atomic::AtomicBool;
 
-use gpui::{
-    px, size, App, AppContext, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions,
-};
+use gpui::{px, size, App, AppContext, Bounds};
 
 use app::DictationApp;
 
@@ -101,12 +99,12 @@ fn main() {
     if !claim_single_instance() {
         return;
     }
-    // `--background` = the autostart entry point: the entity runs without a
-    // window (hotkey + pill keep working); a second launch resurfaces the
-    // status window via the SHOW_REQUESTED event.
+    // `--background` = the Engine-managed entry point: the entity runs
+    // windowless (hotkey + pill keep working); a second launch resurfaces
+    // the status window via the SHOW_REQUESTED event.
     let background = std::env::args().any(|arg| arg == "--background");
-    // Explicit: the pill is a transient overlay and the status window may be
-    // minimized/closed-adjacent — dictation keeps working without any window.
+    // Explicit: the pill is a transient overlay and the status window closes
+    // for real — dictation keeps working with no window at all.
     gpui::application()
         .with_quit_mode(gpui::QuitMode::Explicit)
         .with_assets(assets::Assets)
@@ -116,134 +114,23 @@ fn main() {
                 .add_fonts(imago_gpui::assets::font_bytes())
                 .expect("load Imago fonts");
             imago_gpui::theme::apply(cx);
-            let bounds = window_bounds(cx);
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    titlebar: Some(gpui::TitlebarOptions {
-                        title: Some(SharedString::from("Mundus Dictation")),
-                        appears_transparent: true,
-                        traffic_light_position: Some(gpui::point(px(12.), px(14.))),
-                    }),
-                    // `--background` (autostart): create hidden — dictation
-                    // works, nothing is shown until a second launch resurfaces
-                    // the window via the SHOW_REQUESTED event.
-                    show: !background,
-                    focus: !background,
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let app = cx.new(|cx| DictationApp::new(window, cx));
-                    cx.new(|cx| gpui_component::Root::new(app, window, cx))
-                },
-            )
-            .unwrap();
-            if !background && std::env::var("DICTATION_GPUI_OFFSCREEN").is_err() {
-                cx.activate(true);
+            // The entity owns the worker + Engine subscription, so it must
+            // outlive the status window: the window's root view drops its
+            // ref on close, this global keeps the entity alive for the
+            // process lifetime.
+            let entity = cx.new(DictationApp::new);
+            cx.set_global(StatusApp(entity));
+            let app = cx.global::<StatusApp>().0.clone();
+            if !background {
+                app::open_status_window(&app, cx);
+                if std::env::var("DICTATION_GPUI_OFFSCREEN").is_err() {
+                    cx.activate(true);
+                }
             }
         });
 }
 
-// --- Windows autostart (HKCU\...\Run\KosmosDictation — persisted name) ------
+/// Holds the session entity for the process lifetime — see `main`.
+struct StatusApp(gpui::Entity<DictationApp>);
 
-// Only consumed by the #[cfg(windows)] fns below — gate the constants too or
-// cargo check/clippy on a non-Windows host flags them as dead code.
-#[cfg(windows)]
-const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-#[cfg(windows)]
-// Persisted registry value name — kept as-is across the Mundus rename so the
-// entry existing installs carry is updated in place instead of orphaned.
-const RUN_VALUE: &str = "KosmosDictation";
-
-/// Whether the Run entry exists (any value — we don't police the path).
-#[cfg(windows)]
-pub(crate) fn autostart_enabled() -> bool {
-    use windows_sys::Win32::System::Registry::*;
-    let key: Vec<u16> = RUN_KEY.encode_utf16().chain([0]).collect();
-    let name: Vec<u16> = RUN_VALUE.encode_utf16().chain([0]).collect();
-    unsafe {
-        let mut hkey = std::ptr::null_mut();
-        if RegOpenKeyExW(
-            windows_sys::Win32::System::Registry::HKEY_CURRENT_USER,
-            key.as_ptr(),
-            0,
-            KEY_READ,
-            &mut hkey,
-        ) != 0
-        {
-            return false;
-        }
-        let exists = RegQueryValueExW(
-            hkey,
-            name.as_ptr(),
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        ) == 0;
-        RegCloseKey(hkey);
-        exists
-    }
-}
-
-/// Write/remove `"<exe>" --background` under HKCU Run. Returns success.
-#[cfg(windows)]
-pub(crate) fn set_autostart(on: bool) -> bool {
-    use windows_sys::Win32::System::Registry::*;
-    let key: Vec<u16> = RUN_KEY.encode_utf16().chain([0]).collect();
-    let name: Vec<u16> = RUN_VALUE.encode_utf16().chain([0]).collect();
-    unsafe {
-        let mut hkey = std::ptr::null_mut();
-        if RegOpenKeyExW(
-            windows_sys::Win32::System::Registry::HKEY_CURRENT_USER,
-            key.as_ptr(),
-            0,
-            KEY_SET_VALUE,
-            &mut hkey,
-        ) != 0
-        {
-            return false;
-        }
-        let ok = if on {
-            let exe = match std::env::current_exe() {
-                Ok(p) => p,
-                Err(_) => {
-                    RegCloseKey(hkey);
-                    return false;
-                }
-            };
-            let value: Vec<u16> = format!("\"{}\" --background", exe.display())
-                .encode_utf16()
-                .chain([0])
-                .collect();
-            RegSetValueExW(
-                hkey,
-                name.as_ptr(),
-                0,
-                REG_SZ,
-                value.as_ptr().cast(),
-                (value.len() * 2) as u32,
-            ) == 0
-        } else {
-            // ERROR_FILE_NOT_FOUND = the value was never set — the desired
-            // end state (no autostart) is already reality, not a failure.
-            let code = RegDeleteValueW(hkey, name.as_ptr());
-            code == 0 || code == windows_sys::Win32::Foundation::ERROR_FILE_NOT_FOUND
-        };
-        RegCloseKey(hkey);
-        ok
-    }
-}
-
-#[cfg(not(windows))]
-pub(crate) fn autostart_enabled() -> bool {
-    false
-}
-
-#[cfg(not(windows))]
-pub(crate) fn set_autostart(_on: bool) -> bool {
-    false
-}
-
-#[allow(dead_code)]
-fn _sig(_: &mut Window, _: &mut Context<DictationApp>) {}
+impl gpui::Global for StatusApp {}
