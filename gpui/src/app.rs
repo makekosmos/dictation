@@ -30,15 +30,10 @@ pub struct DictationApp {
 
     /// Dictation pill overlay window while a recording session is active.
     pub pill: Option<WindowHandle<DictationPill>>,
-    /// Status window handle — minimized instead of closed (the worker/Engine
-    /// subscription lives on this entity, so the window must not die). `None`
-    /// in `--background` (autostart) mode until the window is requested.
+    /// Status window handle — `None` while closed. The window is disposable:
+    /// the entity (worker + Engine subscription) is held by an app global,
+    /// so closing only drops the HWND and `SHOW_REQUESTED` reopens it.
     status: Option<AnyWindowHandle>,
-    /// HKCU Run entry `KosmosDictation` present → launch at Windows sign-in.
-    /// The value name is a persisted identifier and stays `KosmosDictation`
-    /// across the Mundus rename — renaming it would orphan the entry that
-    /// existing installs already carry.
-    autostart: bool,
     /// Session phase shared by the pill and the status window.
     pub phase: Option<PillPhase>,
     /// `dictation.begin_hotkey_capture` armed — hook intercepts the next
@@ -72,20 +67,15 @@ pub struct DictationApp {
 }
 
 impl DictationApp {
-    /// In `--background` (autostart) mode the window is created hidden
-    /// (`show: false`) — same entity, nothing on screen.
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// Windowless by design — `--background` (Engine-managed) starts the
+    /// entity with no window at all; `open_status_window` binds one later.
+    pub fn new(cx: &mut Context<Self>) -> Self {
         // `None` data_dir = the kit's Engine client re-runs discovery on
         // every call (MUNDUS_DATA_DIR → legacy env → config/Mundus →
         // config/Kosmos). Dictation can outlive an Engine restart or start
-        // before it at sign-in, and the lock may sit in either dir while an
-        // install moves over — a startup snapshot would pin the wrong one.
+        // before it, and the lock may sit in either dir while an install
+        // moves over — a startup snapshot would pin the wrong one.
         let data_dir = None;
-        // Closing the only window would drop this entity — the worker, the
-        // Engine subscription and the hotkey flow with it. Intercept close:
-        // minimize instead (same affordance as tray apps — dictation keeps
-        // working, the window is gone from view).
-        install_should_close(window, cx);
         let mut this = Self {
             worker: Worker::start(data_dir),
             slots: HashMap::new(),
@@ -95,8 +85,7 @@ impl DictationApp {
             notice: None,
             worker_dead: false,
             pill: None,
-            status: Some(window.window_handle()),
-            autostart: crate::autostart_enabled(),
+            status: None,
             phase: None,
             capture: None,
             capture_adopted: false,
@@ -407,35 +396,19 @@ impl DictationApp {
         );
     }
 
-    pub fn autostart(&self) -> bool {
-        self.autostart
-    }
-
-    /// Toggle the HKCU Run entry — `--background` starts the app silently
-    /// (no window) at Windows sign-in. Enabling also registers Engine
-    /// autostart via `engine.autostart.set`: dictation at sign-in is
-    /// useless without Engine up.
-    pub fn set_autostart(&mut self, on: bool, cx: &mut Context<Self>) {
-        if crate::set_autostart(on) {
-            self.autostart = on;
-            if on {
-                self.action("engine.autostart.set", json!({ "enabled": true }));
-            }
-        } else {
-            // Registry write failed — surface it instead of silently snapping
-            // the toggle back with zero feedback.
-            self.error = Some("Не удалось обновить автозапуск.".into());
-        }
-        cx.notify();
-    }
-
     // --- Worker drain --------------------------------------------------------
 
     fn drain(&mut self, cx: &mut Context<Self>) {
-        // Second-launch wake: resurface the (possibly minimized/hidden) window.
+        // Second-launch wake: resurface the live status window, or open a
+        // fresh one when the last close destroyed it.
         if crate::SHOW_REQUESTED.swap(false, std::sync::atomic::Ordering::SeqCst) {
-            if let Some(h) = self.status {
-                let _ = h.update(cx, |_, window, _| show_and_activate(window));
+            let resurfaced = self
+                .status
+                .and_then(|h| h.update(cx, |_, window, _| show_and_activate(window)).ok())
+                .is_some();
+            if !resurfaced {
+                let entity = cx.entity();
+                open_status_window(&entity, cx);
             }
         }
         // ~2s: retry slots whose op failed or never landed (Engine offline at
@@ -814,14 +787,42 @@ fn show_and_activate(window: &mut Window) {
     window.activate_window();
 }
 
-/// Close-intercept for the status window: minimize instead of close so the
-/// entity
-/// (worker + Engine subscription) keeps the dictation flow alive.
-fn install_should_close(window: &mut Window, cx: &App) {
-    window.on_window_should_close(cx, |window, _cx| {
-        window.minimize_window();
-        false
-    });
+/// Open (or reopen) the status window on the existing entity. The window is
+/// disposable — the entity is held by the `StatusApp` global, so the close
+/// button really closes the HWND while the worker, Engine subscription and
+/// pill flow keep running. A second launch (`SHOW_REQUESTED`) calls this
+/// again for a fresh window.
+pub(crate) fn open_status_window(app: &Entity<DictationApp>, cx: &mut App) {
+    let app = app.clone();
+    let weak = app.downgrade();
+    let root_app = app.clone();
+    let bounds = crate::window_bounds(cx);
+    let result = cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some(SharedString::from("Mundus Dictation")),
+                appears_transparent: true,
+                traffic_light_position: Some(gpui::point(px(12.), px(14.))),
+            }),
+            ..Default::default()
+        },
+        move |window, cx| {
+            // Mark the handle dead the moment close is requested — the drain
+            // loop then treats `SHOW_REQUESTED` as "reopen", not "resurface".
+            window.on_window_should_close(cx, move |_, cx| {
+                let _ = weak.update(cx, |this, _| this.status = None);
+                true
+            });
+            cx.new(|cx| gpui_component::Root::new(root_app, window, cx))
+        },
+    );
+    match result {
+        Ok(handle) => {
+            app.update(cx, |this, _| this.status = Some(handle.into()));
+        }
+        Err(error) => eprintln!("dictation-gpui: status window open failed: {error}"),
+    }
 }
 
 /// Exposes the named data slots to `mundus_gpui_kit::fields::slot_or`.
