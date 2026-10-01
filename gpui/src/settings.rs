@@ -16,6 +16,17 @@ fn trigger_label(mode: &str) -> &'static str {
     }
 }
 
+/// Recognition-language chips: (wire code, display label, selected). An
+/// unknown `config.language` selects nothing — the selector then just
+/// doesn't overwrite it until the user picks a chip.
+fn language_options(current: &str) -> [(&'static str, &'static str, bool); 3] {
+    [
+        ("ru", "Русский", current == "ru"),
+        ("en", "English", current == "en"),
+        ("auto", "Авто", current == "auto"),
+    ]
+}
+
 pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
     let state = app.data("dictation.state");
     if state.is_null() {
@@ -41,7 +52,10 @@ pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>
     el = el.child(
         row(
             "Диктовка включена",
-            "Выключает распознавание, запись по клавише останется",
+            // Engine submits audio to the pending queue first, then checks
+            // `provider_enabled` and fails the session — the recording stays
+            // in the queue for a later retry (host_capture.rs::submit_audio).
+            "Запись сохраняется в очередь, но не распознаётся",
         )
         .child(
             toggle(
@@ -101,33 +115,22 @@ pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>
     {
         let language = vstr(cfg, "language");
         let mut opts = div().flex().items_center().gap_1();
-        for lang in ["ru", "en", "auto"] {
+        for (code, label, selected) in language_options(&language) {
             opts = opts.child(
-                seg_opt(&format!("dict-lang-{lang}"), lang, language == lang).on_click(
-                    cx.listener(move |this, _, _, cx| {
-                        this.action("dictation.update_config", json!({ "language": lang }));
+                seg_opt(&format!("dict-lang-{code}"), label, selected).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.action("dictation.update_config", json!({ "language": code }));
                         cx.notify();
-                    }),
-                ),
+                    },
+                )),
             );
         }
-        el = el.child(row("Язык распознавания", "«auto» — определить автоматически").child(opts));
+        el = el.child(row("Язык распознавания", "«Авто» — определить автоматически").child(opts));
     }
 
     // --- Read-only mirror + hotkey/idle-unload (already wired) ------------
     el = el.child(kv("Режим", trigger_label(&vstr(cfg, "triggerMode"))));
-    el = el.child(kv(
-        "Провайдер",
-        format!(
-            "{}{}",
-            vstr(cfg, "provider"),
-            if vbool(cfg, "providerEnabled") {
-                ""
-            } else {
-                " (выключен)"
-            }
-        ),
-    ));
+    el = el.child(kv("Провайдер", vstr(cfg, "provider")));
     el = el.child(kv("Модель", vstr(cfg, "model")));
     el = el.child(
         div()
@@ -221,5 +224,26 @@ pub(crate) fn seg_opt(id: &str, label: &'static str, selected: bool) -> Stateful
         el.bg(fade(FG(), 0.08))
             .text_color(fade(FG(), 0.75))
             .hover(|s| s.bg(fade(FG(), 0.14)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::language_options;
+
+    /// Chips show human labels but keep wire codes; an unknown config value
+    /// selects nothing, so the selector never silently rewrites it.
+    #[test]
+    fn language_options_label_and_select() {
+        let opts = language_options("en");
+        assert_eq!(
+            opts,
+            [
+                ("ru", "Русский", false),
+                ("en", "English", true),
+                ("auto", "Авто", false),
+            ]
+        );
+        assert!(language_options("fr").iter().all(|(_, _, s)| !s));
     }
 }
