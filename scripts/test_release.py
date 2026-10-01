@@ -69,6 +69,11 @@ def test_release():
         repo = root / "repo"
         repo.mkdir()
         previous_cwd = Path.cwd()
+        # Git exports GIT_DIR/GIT_WORK_TREE/etc. while running hooks; without
+        # scrubbing, the temp repo's git/config calls would land in the
+        # caller's repository. release.run() shares this process's env, so
+        # strip them process-wide for the duration of the fixture.
+        git_env = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("GIT_")}
         os.chdir(repo)
         try:
             def git(*args):
@@ -189,6 +194,7 @@ def test_release():
                             assert plist["CFBundleShortVersionString"] == "1.0.2"
         finally:
             os.chdir(previous_cwd)
+            os.environ.update(git_env)
     print("Release version checks passed")
 
 
