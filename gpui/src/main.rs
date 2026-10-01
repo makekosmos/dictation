@@ -6,8 +6,13 @@
 
 mod app;
 mod assets;
+mod hotkey;
 mod pill;
 mod pill_wave;
+mod queue;
+mod session;
+mod settings;
+mod status_window;
 mod view;
 mod worker;
 
@@ -122,7 +127,7 @@ fn main() {
             cx.set_global(StatusApp(entity));
             let app = cx.global::<StatusApp>().0.clone();
             if !background {
-                app::open_status_window(&app, cx);
+                status_window::open_status_window(&app, cx);
                 if std::env::var("DICTATION_GPUI_OFFSCREEN").is_err() {
                     cx.activate(true);
                 }

@@ -17,6 +17,8 @@ imago-gpui = { git = "https://github.com/makekosmos/imago.git", rev = "b9dd284e7
 # makekosmos org is renamed (GitHub redirects).
 mundus-gpui-kit = { git = "https://github.com/makekosmos/kosmos-gpui-kit", rev = "eadede171ddab5742f8565305d03110abdfa13ff" }
 serde_json = "1.0.151"
+# Queue row titles render RFC 3339 timestamps as local «1 окт., 14:32».
+chrono = "0.4"
 raw-window-handle = "0.6"
 windows-sys = { version = "0.61.2", features = [
   "Win32_System_Threading",
@@ -24,6 +26,11 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_System_Registry",
   "Win32_UI_WindowsAndMessaging",
 ] }
+
+# #[gpui::test] + TestAppContext live behind gpui's test-support feature
+# (deterministic executors, test platform). It merges only into test builds.
+[dev-dependencies]
+gpui = { package = "gpui-kit", version = "=0.6.2", features = ["test-support"] }
 
 # Dev builds: keep debug info but optimize — unoptimized taffy/cosmic-text/
 # gpui (and our own render path) make even modest UIs run at ~20fps.

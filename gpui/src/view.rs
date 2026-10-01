@@ -1,5 +1,6 @@
-//! Status window for the standalone dictation app: record control, Engine
-//! config/state mirror and the local-model manager. The pill overlay itself
+//! Status window for the standalone dictation app: record control, last
+//! transcript and the local-model manager. Settings live in `settings.rs`,
+//! the recognition queue and stats in `queue.rs`. The pill overlay itself
 //! is `pill.rs` — a separate always-on-top window.
 use ::gpui::{prelude::*, *};
 use gpui_component::scroll::ScrollableElement;
@@ -9,13 +10,6 @@ use crate::app::DictationApp;
 use crate::pill::PillPhase;
 use mundus_gpui_kit::fields::*;
 use mundus_gpui_kit::theme::*;
-
-fn trigger_label(mode: &str) -> &'static str {
-    match mode {
-        "push_to_talk" => "Удержание (push-to-talk)",
-        _ => "Переключение (toggle)",
-    }
-}
 
 fn state_label(state: &str) -> &'static str {
     match state {
@@ -137,99 +131,8 @@ impl Render for DictationApp {
         }
         col = col.child(record);
 
-        // --- Конфиг ---
-        if !state.is_null() {
-            let mut card_el = card().child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(c(MUTED_FG()))
-                    .child("Конфигурация (Engine)"),
-            );
-            card_el = card_el.child(kv("Режим", trigger_label(&vstr(cfg, "triggerMode"))));
-            card_el = card_el.child(kv("Язык", vstr(cfg, "language")));
-            card_el = card_el.child(kv(
-                "Провайдер",
-                format!(
-                    "{}{}",
-                    vstr(cfg, "provider"),
-                    if vbool(cfg, "providerEnabled") {
-                        ""
-                    } else {
-                        " (выключен)"
-                    }
-                ),
-            ));
-            card_el = card_el.child(kv("Модель", vstr(cfg, "model")));
-            card_el = card_el.child(kv("Вставка", vstr(cfg, "injectMode")));
-            card_el = card_el.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(kv("Хоткей", vstr(cfg, "hotkey")))
-                    .child(if self.hotkey_capturing {
-                        div()
-                            .text_size(px(11.))
-                            .text_color(c(WARN()))
-                            .child("Нажмите комбинацию… (Esc — отмена)")
-                            .into_any_element()
-                    } else {
-                        btn(
-                            "dict-hotkey-capture",
-                            "Изменить",
-                            false,
-                            cx,
-                            |this, cx| this.hotkey_capture_start(cx),
-                        )
-                        .into_any_element()
-                    }),
-            );
-            // Idle unload: number → minutes, null/0 → "Не выгружать".
-            let unload_ms = vnum(cfg, "localIdleUnloadMs");
-            let current_min = if unload_ms <= 0.0 {
-                None
-            } else {
-                Some((unload_ms / 60_000.0).round() as u64)
-            };
-            let mut unload_row = div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(kv("Выгрузка модели", "после простоя"));
-            let mut opts = div().flex().items_center().gap_1();
-            for (label, mins) in [
-                ("5 мин", Some(5u64)),
-                ("10 мин", Some(10)),
-                ("30 мин", Some(30)),
-                ("∞", None),
-            ] {
-                let selected = mins == current_min;
-                opts = opts.child(
-                    seg_opt(&format!("unload-{label}"), label, selected).on_click(cx.listener(
-                        move |this, _, _, cx| {
-                            this.set_idle_unload_min(mins);
-                            cx.notify();
-                        },
-                    )),
-                );
-            }
-            unload_row = unload_row.child(opts);
-            card_el = card_el.child(unload_row);
-
-            if let Some(err) = vopt(&state, "lastError") {
-                card_el = card_el.child(kv("Последняя ошибка", err));
-            }
-            col = col.child(card_el);
-        } else {
-            col = col.child(
-                card().child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(c(MUTED_FG()))
-                        .child("Подключение к Engine…"),
-                ),
-            );
-        }
+        // --- Настройки (Engine config mirror + update_config controls) ---
+        col = col.child(crate::settings::config_card(self, cx));
 
         // --- Последняя расшифровка ---
         let result = self.data("dictation.result");
@@ -266,6 +169,10 @@ impl Render for DictationApp {
             }
             col = col.child(card_el);
         }
+
+        // --- Очередь распознавания + статистика ---
+        col = col.child(crate::queue::pending_card(self, cx));
+        col = col.child(crate::queue::stats_card(self, cx));
 
         // --- Локальные модели ---
         col = col.child(models_card(self, cx));
@@ -375,7 +282,7 @@ fn models_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyEle
                 ))
                 .child(btn_id(&format!("dict-del-{id}"), "Удалить", {
                     cx.listener(move |this, _, _, cx| {
-                        this.ask_delete(ask_id.clone());
+                        this.ask_confirm(crate::app::Confirm::DeleteModel(ask_id.clone()));
                         cx.notify();
                     })
                 }));
@@ -393,7 +300,8 @@ fn models_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyEle
         el = el.child(r);
     }
     // Inline delete confirm — cheaper than a modal for this utility window.
-    if let Some(delete_id) = app.delete_confirm.clone() {
+    if let Some(crate::app::Confirm::DeleteModel(delete_id)) = &app.confirm {
+        let delete_id = delete_id.clone();
         let yes = delete_id.clone();
         el = el.child(
             row(
@@ -407,11 +315,11 @@ fn models_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyEle
                 cx,
                 move |this, _cx| {
                     this.action("dictation.delete_local_model", json!({"modelId": yes}));
-                    this.delete_confirm = None;
+                    this.confirm = None;
                 },
             ))
             .child(btn("dict-del-no", "Отмена", false, cx, |this, _| {
-                this.delete_confirm = None;
+                this.confirm = None;
             })),
         );
     }
@@ -452,24 +360,4 @@ fn caption_btn(label: &'static str, area: WindowControlArea, danger: bool) -> St
             }
         })
         .child(label)
-}
-
-/// Segmented-option chip (idle-unload selector) — small clickable token,
-/// highlighted when `selected`.
-fn seg_opt(id: &str, label: &'static str, selected: bool) -> Stateful<Div> {
-    let el = div()
-        .id(SharedString::from(id.to_string()))
-        .px(px(7.))
-        .py(px(2.))
-        .rounded(px(4.))
-        .text_size(px(11.))
-        .cursor_pointer()
-        .child(label);
-    if selected {
-        el.bg(c(ACCENT())).text_color(c(BG()))
-    } else {
-        el.bg(fade(FG(), 0.08))
-            .text_color(fade(FG(), 0.75))
-            .hover(|s| s.bg(fade(FG(), 0.14)))
-    }
 }

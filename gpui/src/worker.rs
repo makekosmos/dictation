@@ -5,6 +5,7 @@ use std::sync::mpsc::{Receiver, Sender};
 
 use mundus_gpui_kit::engine::Engine;
 
+#[derive(Debug)]
 pub enum Command {
     /// POST /v1/rpc — `slot` routes the reply into `DictationApp::slots`.
     Rpc {
