@@ -8,6 +8,8 @@ mod app;
 mod assets;
 mod pill;
 mod pill_wave;
+mod queue;
+mod settings;
 mod view;
 mod worker;
 

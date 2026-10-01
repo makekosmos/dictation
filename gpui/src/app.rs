@@ -62,8 +62,20 @@ pub struct DictationApp {
     /// Monotonic session counter — a delayed pill close scheduled by session N
     /// must not close session N+1's pill.
     session: u64,
-    /// Local model awaiting a delete confirmation in the status window.
-    pub delete_confirm: Option<String>,
+    /// Destructive action awaiting an inline confirmation in the status
+    /// window (model delete, stats reset, queue purge).
+    pub confirm: Option<Confirm>,
+}
+
+/// Destructive Engine op the status window asks to confirm inline — cheaper
+/// than a modal for this utility window.
+pub enum Confirm {
+    /// `dictation.delete_local_model` for this model id.
+    DeleteModel(String),
+    /// `dictation.reset_stats` — counters are zeroed.
+    ResetStats,
+    /// `dictation.discard_all` — queued audio is deleted unrecognised.
+    DiscardAll,
 }
 
 impl DictationApp {
@@ -75,9 +87,14 @@ impl DictationApp {
         // config/Kosmos). Dictation can outlive an Engine restart or start
         // before it, and the lock may sit in either dir while an install
         // moves over — a startup snapshot would pin the wrong one.
-        let data_dir = None;
+        Self::with_worker(Worker::start(None), cx)
+    }
+
+    /// `new` with a caller-provided worker — tests pass channel ends they
+    /// hold themselves instead of spawning Engine-bound threads.
+    fn with_worker(worker: Worker, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
-            worker: Worker::start(data_dir),
+            worker,
             slots: HashMap::new(),
             ops: HashMap::new(),
             drain_ticks: 0,
@@ -95,7 +112,7 @@ impl DictationApp {
             hotkey_capturing: false,
             delivery: None,
             session: 0,
-            delete_confirm: None,
+            confirm: None,
         };
         this.refresh(cx);
         cx.spawn(async move |this, cx| loop {
@@ -129,9 +146,10 @@ impl DictationApp {
         self.call("@action", op, params);
     }
 
-    /// Two-step inline delete confirm for a local model row.
-    pub fn ask_delete(&mut self, model_id: String) {
-        self.delete_confirm = Some(model_id);
+    /// Two-step inline confirm for a destructive action (model delete,
+    /// stats reset, queue purge).
+    pub fn ask_confirm(&mut self, confirm: Confirm) {
+        self.confirm = Some(confirm);
     }
 
     /// Queue an Engine op into a named slot; the reply overwrites it.
@@ -184,6 +202,24 @@ impl DictationApp {
         if !sent {
             self.hotkey_capturing = false;
         }
+        cx.notify();
+    }
+
+    /// Disarm the Engine hotkey-capture mode (status-window Отмена while
+    /// capturing, and window close): without `end_hotkey_capture` the Engine
+    /// hook stays armed and consumes the next keystroke forever. Same
+    /// dedicated slot as `begin` — a failed end surfaces via the banner and
+    /// clears nothing user-visible (the flag is already off).
+    pub fn hotkey_capture_cancel(&mut self, cx: &mut Context<Self>) {
+        if !self.hotkey_capturing {
+            return;
+        }
+        self.hotkey_capturing = false;
+        self.send_command(Command::Rpc {
+            slot: "dictation.hotkey_capture".into(),
+            op: "dictation.end_hotkey_capture",
+            params: json!({}),
+        });
         cx.notify();
     }
 
@@ -811,7 +847,12 @@ pub(crate) fn open_status_window(app: &Entity<DictationApp>, cx: &mut App) {
             // Mark the handle dead the moment close is requested — the drain
             // loop then treats `SHOW_REQUESTED` as "reopen", not "resurface".
             window.on_window_should_close(cx, move |_, cx| {
-                let _ = weak.update(cx, |this, _| this.status = None);
+                let _ = weak.update(cx, |this, cx| {
+                    this.status = None;
+                    // A capture armed behind a closed window would keep
+                    // eating keystrokes with no UI left to cancel it.
+                    this.hotkey_capture_cancel(cx);
+                });
                 true
             });
             cx.new(|cx| gpui_component::Root::new(root_app, window, cx))
@@ -890,56 +931,5 @@ fn vk_to_key_name(vk: u32) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_accelerator, state_broadcast_ended, vk_to_key_name};
-    use serde_json::{json, Value};
-
-    /// Adopted-session retirement: only a named non-recording broadcast ends
-    /// the adopted pill — "recording"/"capturing" (live) and a missing state
-    /// field (no information) must keep it.
-    #[test]
-    fn state_broadcast_ended_classification() {
-        for ended in ["idle", "transcribing", "pending", "error"] {
-            assert!(state_broadcast_ended(Some(ended)), "{ended}");
-        }
-        for live in ["recording", "capturing"] {
-            assert!(!state_broadcast_ended(Some(live)), "{live}");
-        }
-        assert!(!state_broadcast_ended(None));
-    }
-
-    /// VK_OEM_PLUS must produce the named accelerator token "Plus" — '+' is
-    /// the accelerator delimiter, so "Ctrl++" parses back as a bare "Ctrl"
-    /// (the pill footer's own split('+') drops the empty key part too).
-    #[test]
-    fn accelerator_names_oem_plus() {
-        let event = json!({ "vk": 0xBB, "ctrl": true });
-        let accel = build_accelerator(&event).expect("accelerator");
-        assert_eq!(accel, "Ctrl+Plus");
-        let parts: Vec<&str> = accel.split('+').filter(|p| !p.is_empty()).collect();
-        assert_eq!(parts, ["Ctrl", "Plus"]);
-        // The other OEM punctuation keys stay literal — '+' is the only
-        // collision with the delimiter.
-        for vk in [
-            0xBAu32, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0, 0xDB, 0xDC, 0xDD, 0xDE,
-        ] {
-            let accel = build_accelerator(&json!({ "vk": vk, "ctrl": true })).expect("accelerator");
-            assert_eq!(
-                accel.split('+').filter(|p| !p.is_empty()).count(),
-                2,
-                "{accel}"
-            );
-        }
-    }
-
-    /// A captured key with no usable name must not write a modifier-only
-    /// accelerator at all.
-    #[test]
-    fn accelerator_rejects_unmapped_vk() {
-        assert_eq!(vk_to_key_name(0x1B), None); // Esc → capture_cancelled path
-        assert_eq!(
-            build_accelerator(&json!({ "vk": 0x1B, "ctrl": true })),
-            None
-        );
-        assert_eq!(build_accelerator(&Value::Null), None);
-    }
+    include!("app_tests.rs");
 }

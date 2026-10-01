@@ -25,6 +25,11 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 
+# #[gpui::test] + TestAppContext live behind gpui's test-support feature
+# (deterministic executors, test platform). It merges only into test builds.
+[dev-dependencies]
+gpui = { package = "gpui-kit", version = "=0.6.2", features = ["test-support"] }
+
 # Dev builds: keep debug info but optimize — unoptimized taffy/cosmic-text/
 # gpui (and our own render path) make even modest UIs run at ~20fps.
 [profile.dev]
