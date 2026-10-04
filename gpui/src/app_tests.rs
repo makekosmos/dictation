@@ -215,12 +215,17 @@ fn state_broadcast_ended_classification() {
 /// pop the pill back open; a foreign capture id still adopts.
 #[test]
 fn adoption_skips_ended_capture() {
-    assert!(!should_adopt_capture(Some("cap-1"), "cap-1"));
-    assert!(should_adopt_capture(Some("cap-1"), "cap-foreign"));
-    assert!(should_adopt_capture(None, "cap-1"));
+    let mut ended = std::collections::HashSet::new();
+    ended.insert("cap-1".to_string());
+    assert!(!should_adopt_capture(&ended, "cap-1"));
+    assert!(should_adopt_capture(&ended, "cap-foreign"));
+    assert!(should_adopt_capture(
+        &std::collections::HashSet::new(),
+        "cap-1"
+    ));
     // A malformed event with an empty captureId would adopt a session we
     // could never stop (stop needs the id) — reject it.
-    assert!(!should_adopt_capture(None, ""));
+    assert!(!should_adopt_capture(&std::collections::HashSet::new(), ""));
 }
 
 /// VK_OEM_PLUS must produce the named accelerator token "Plus" — '+' is
@@ -356,4 +361,73 @@ fn call_marks_slot_failed_when_worker_dead(cx: &mut TestAppContext) {
             assert!(this.error.is_some());
         })
     });
+}
+
+/// The ~2s ops retry marks a Failed slot Loading BEFORE re-sending — if
+/// that send dies (worker thread gone), the slot must not stay Loading:
+/// no reply can ever arrive, so the card would paint "Загрузка…" forever.
+#[gpui::test]
+fn retry_marks_slot_failed_when_worker_dead(cx: &mut TestAppContext) {
+    let (app, rx, replies, _events) = test_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |this, _| {
+            this.call("dictation.stats", "dictation.get_stats", json!({}))
+        })
+    });
+    rx.try_recv().expect("get_stats op");
+    replies
+        .send(Reply {
+            slot: "dictation.stats".into(),
+            result: Err("Engine offline".into()),
+        })
+        .unwrap();
+    cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
+    drop(rx); // Now the worker dies: the next retry's send fails.
+    for _ in 0..67 {
+        cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
+    }
+    cx.update(|cx| {
+        app.update(cx, |this, _| {
+            assert!(
+                matches!(
+                    this.slots.get("dictation.stats"),
+                    Some(crate::app::Slot::Failed(_))
+                ),
+                "dead retry left the slot Loading"
+            );
+        })
+    });
+}
+
+/// A queue op whose send fails (dead worker) gets no "@action" reply —
+/// without clearing `pending_inflight` there, the row's Повторить/Удалить
+/// buttons stay disabled for the rest of the process lifetime.
+#[gpui::test]
+fn queue_op_releases_inflight_when_worker_dead(cx: &mut TestAppContext) {
+    let (app, rx, _replies, _events) = test_app(cx);
+    drop(rx);
+    cx.update(|cx| app.update(cx, |this, _| this.queue_retry("u1".into())));
+    cx.update(|cx| {
+        app.update(cx, |this, _| {
+            assert!(
+                this.pending_inflight.is_empty(),
+                "dead send left the uuid in-flight: row buttons stuck disabled"
+            );
+        })
+    });
+}
+
+/// The ended-capture tombstone must cover every recently ended id, not just
+/// the last one: cap-1's straggler level frames can still be in flight when
+/// a later cap-2 session ends and overwrites a single-slot tombstone —
+/// they'd re-adopt the dead cap-1 and reopen the pill on "Идёт запись".
+#[test]
+fn adoption_skips_all_recently_ended_captures() {
+    let mut ended = std::collections::HashSet::new();
+    ended.insert("cap-1".to_string());
+    ended.insert("cap-2".to_string());
+    assert!(!should_adopt_capture(&ended, "cap-1"));
+    assert!(!should_adopt_capture(&ended, "cap-2"));
+    assert!(should_adopt_capture(&ended, "cap-foreign"));
+    assert!(!should_adopt_capture(&ended, ""));
 }
