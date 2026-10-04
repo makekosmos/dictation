@@ -5,7 +5,9 @@
 set -euo pipefail
 
 git fetch origin "$DEFAULT_BRANCH" --tags
-python scripts/release.py set "$RELEASE_VERSION"
+# GitHub runners ship `python`; minimal environments may only have python3.
+PYTHON=$(command -v python || command -v python3)
+"$PYTHON" scripts/release.py set "$RELEASE_VERSION"
 git config user.name 'github-actions[bot]'
 git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 git add gpui/Cargo.toml gpui/Cargo.lock

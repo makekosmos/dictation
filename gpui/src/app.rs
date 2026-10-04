@@ -52,11 +52,13 @@ pub struct DictationApp {
     /// in flight — the session is finished the moment its reply arrives
     /// (worker.ts `stopAfterStart` parity).
     pub(crate) finish_after_start: bool,
-    /// The last captureId WE ended (cancel/finish/orphan stop). Its
+    /// The captureIds WE recently ended (cancel/finish/orphan stop). Their
     /// `dictation_audio_level` frames still drain after our stop command
     /// lands — without this tombstone a straggler re-adopts the dead
-    /// capture and pops the pill back open on "Идёт запись".
-    pub(crate) ended_capture: Option<String>,
+    /// capture and pops the pill back open on "Идёт запись". A set, not the
+    /// last id: session N+1 can end while session N's frames are still in
+    /// flight, and a single slot would forget N.
+    pub(crate) ended_capture: std::collections::HashSet<String>,
     pub(crate) last_duration_ms: f64,
     /// Live mic RMS levels (`dictation_audio_level` WS events) — the pill's
     /// waveform ring buffer, last 120 samples like the Vue pill history.
@@ -117,7 +119,7 @@ impl DictationApp {
             capture: None,
             capture_adopted: false,
             finish_after_start: false,
-            ended_capture: None,
+            ended_capture: std::collections::HashSet::new(),
             last_duration_ms: 0.0,
             levels: VecDeque::new(),
             hotkey_capturing: false,
@@ -202,6 +204,9 @@ impl DictationApp {
                 slot,
                 Slot::Failed("Соединение с Engine завершено. Перезапустите приложение.".into()),
             );
+            // No "@action" reply will ever land to clear these — release
+            // the queue rows or their buttons stay disabled forever.
+            self.pending_inflight.clear();
         }
     }
 
@@ -265,7 +270,21 @@ impl DictationApp {
             for (slot, (op, params)) in self.ops.clone() {
                 if matches!(self.slots.get(&slot), Some(Slot::Failed(_)) | None) {
                     self.slots.insert(slot.clone(), Slot::Loading);
-                    self.send_command(Command::Rpc { slot, op, params });
+                    // A dead worker channel can never produce a reply — mark
+                    // the slot Failed again instead of leaving "Загрузка…"
+                    // painted forever (same guard as `call`).
+                    if !self.send_command(Command::Rpc {
+                        slot: slot.clone(),
+                        op,
+                        params,
+                    }) {
+                        self.slots.insert(
+                            slot,
+                            Slot::Failed(
+                                "Соединение с Engine завершено. Перезапустите приложение.".into(),
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -325,7 +344,7 @@ impl DictationApp {
                         .and_then(Value::as_str)
                         .map(str::to_string)
                 }) {
-                    self.ended_capture = Some(capture_id.clone());
+                    self.tombstone_capture(capture_id.clone());
                     self.send_command(Command::DictationStop {
                         slot: "dictation.pill.orphan_stop".into(),
                         capture_id,
@@ -344,8 +363,8 @@ impl DictationApp {
                     // Cancel during Starting: the pill is already gone —
                     // stop the just-started session instead of resurrecting.
                     if self.phase.is_none() {
-                        if capture_id.is_some() {
-                            self.ended_capture = capture_id.clone();
+                        if let Some(id) = &capture_id {
+                            self.tombstone_capture(id.clone());
                         }
                         self.send_command(Command::DictationCancel {
                             slot: "dictation.pill.cancel".into(),
