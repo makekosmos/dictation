@@ -1,6 +1,6 @@
 [package]
 name = "dictation-gpui"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 description = "Mundus Dictation — standalone GPUI overlay app over Engine RPC/WS (Vue dictation pill parity)"
 default-run = "dictation-gpui"
