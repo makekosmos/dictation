@@ -190,7 +190,19 @@ impl DictationApp {
             self.ops.insert(slot.clone(), (op, params.clone()));
         }
         self.slots.insert(slot.clone(), Slot::Loading);
-        self.send_command(Command::Rpc { slot, op, params });
+        if !self.send_command(Command::Rpc {
+            slot: slot.clone(),
+            op,
+            params,
+        }) {
+            // The worker thread is gone — no reply can ever land, so the
+            // slot would paint "Загрузка…" forever next to the dead-
+            // connection banner.
+            self.slots.insert(
+                slot,
+                Slot::Failed("Соединение с Engine завершено. Перезапустите приложение.".into()),
+            );
+        }
     }
 
     /// Worker command that doesn't map to a data slot (session control ops
@@ -243,12 +255,15 @@ impl DictationApp {
                 crate::status_window::open_status_window(&entity, cx);
             }
         }
-        // ~2s: retry slots whose op failed or never landed (Engine offline at
-        // launch, restart swap). Without this they stay empty forever.
+        // ~2s: retry slots whose op FAILED (Engine offline at launch,
+        // restart swap). A Loading slot already has its RPC queued or in
+        // flight — the Engine client times out at 15s, so re-sending it
+        // every 2s piles up duplicates that run ahead of real session
+        // commands once the Engine is back.
         self.drain_ticks += 1;
         if self.drain_ticks.is_multiple_of(66) {
             for (slot, (op, params)) in self.ops.clone() {
-                if !matches!(self.slots.get(&slot), Some(Slot::Ready(_))) {
+                if matches!(self.slots.get(&slot), Some(Slot::Failed(_)) | None) {
                     self.slots.insert(slot.clone(), Slot::Loading);
                     self.send_command(Command::Rpc { slot, op, params });
                 }

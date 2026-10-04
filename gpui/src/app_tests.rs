@@ -302,3 +302,58 @@ fn queue_item_in_flight_until_pending_refresh(cx: &mut TestAppContext) {
         })
     });
 }
+
+/// The ~2s ops retry must re-issue only ops whose reply FAILED — a slot
+/// still Loading already has its RPC queued or in flight (the Engine
+/// client times out at 15s). Re-sending it every 2s would pile duplicates
+/// into the command channel that, once the Engine recovers, all execute
+/// ahead of real session commands like DictationStart.
+#[gpui::test]
+fn retry_skips_in_flight_ops(cx: &mut TestAppContext) {
+    let (app, rx, replies, _events) = test_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |this, _| {
+            this.call("dictation.stats", "dictation.get_stats", json!({}))
+        })
+    });
+    expect_rpc(&rx, "dictation.get_stats", json!({}));
+    // 66+ drain ticks with no reply: the in-flight op must not duplicate.
+    for _ in 0..66 {
+        cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
+    }
+    assert!(rx.try_recv().is_err(), "in-flight op was re-sent");
+    // Once the op FAILS the retry does re-issue it (Engine back up).
+    replies
+        .send(Reply {
+            slot: "dictation.stats".into(),
+            result: Err("Engine offline".into()),
+        })
+        .unwrap();
+    for _ in 0..67 {
+        cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
+    }
+    expect_rpc(&rx, "dictation.get_stats", json!({}));
+}
+
+/// `call` on a dead worker channel must not leave the slot in
+/// `Slot::Loading` — no reply can ever land, so the view would paint
+/// "Загрузка…" forever next to the dead-connection banner.
+#[gpui::test]
+fn call_marks_slot_failed_when_worker_dead(cx: &mut TestAppContext) {
+    let (app, rx, _replies, _events) = test_app(cx);
+    drop(rx); // The worker's command receiver is gone: every send fails.
+    cx.update(|cx| {
+        app.update(cx, |this, _| {
+            this.call("dictation.stats", "dictation.get_stats", json!({}))
+        })
+    });
+    cx.update(|cx| {
+        app.update(cx, |this, _| {
+            assert!(matches!(
+                this.slots.get("dictation.stats"),
+                Some(crate::app::Slot::Failed(_))
+            ));
+            assert!(this.error.is_some());
+        })
+    });
+}

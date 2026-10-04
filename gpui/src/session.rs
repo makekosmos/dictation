@@ -151,6 +151,12 @@ impl DictationApp {
     /// teardown) — drop the stale handle or every later session reuses it
     /// and runs with no overlay at all.
     pub(crate) fn push_pill(&mut self, cx: &mut Context<Self>) {
+        // Dropping the stale handle below (or a failed open at session
+        // start) leaves `self.pill` empty — without this reopen the CURRENT
+        // session records with no overlay at all, not just the next one.
+        if self.pill.is_none() && self.phase.is_some() {
+            self.pill = crate::pill::open(cx.entity(), self.dictation_hotkey(), cx);
+        }
         let stale = match &self.pill {
             Some(handle) => {
                 let phase = self.phase.unwrap_or(PillPhase::Starting);
