@@ -1,6 +1,6 @@
 use super::{Command, DictationApp, Worker};
 use crate::hotkey::{build_accelerator, vk_to_key_name};
-use crate::session::state_broadcast_ended;
+use crate::session::{should_adopt_capture, state_broadcast_ended};
 use crate::worker::Reply;
 use gpui::{AppContext, Entity, TestAppContext};
 use serde_json::{json, Value};
@@ -208,6 +208,19 @@ fn state_broadcast_ended_classification() {
         assert!(!state_broadcast_ended(Some(live)), "{live}");
     }
     assert!(!state_broadcast_ended(None));
+}
+
+/// Level frames of a capture we just ended (cancel/finish stop still in
+/// flight on the worker channel) must not re-adopt the dead session and
+/// pop the pill back open; a foreign capture id still adopts.
+#[test]
+fn adoption_skips_ended_capture() {
+    assert!(!should_adopt_capture(Some("cap-1"), "cap-1"));
+    assert!(should_adopt_capture(Some("cap-1"), "cap-foreign"));
+    assert!(should_adopt_capture(None, "cap-1"));
+    // A malformed event with an empty captureId would adopt a session we
+    // could never stop (stop needs the id) — reject it.
+    assert!(!should_adopt_capture(None, ""));
 }
 
 /// VK_OEM_PLUS must produce the named accelerator token "Plus" — '+' is

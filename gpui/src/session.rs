@@ -40,6 +40,9 @@ impl DictationApp {
         self.finish_after_start = false;
         self.session += 1;
         let capture_id = self.capture.take();
+        if capture_id.is_some() {
+            self.ended_capture = capture_id.clone();
+        }
         self.capture_adopted = false;
         self.send_command(Command::DictationCancel {
             slot: "dictation.pill.cancel".into(),
@@ -95,6 +98,7 @@ impl DictationApp {
         self.capture_adopted = false;
         match self.capture.take() {
             Some(capture_id) => {
+                self.ended_capture = Some(capture_id.clone());
                 // A dead worker channel must not freeze the pill on
                 // "Распознаю" forever — surface the failure like a refused
                 // Engine op (delivery Failed + timed close).
@@ -211,7 +215,9 @@ impl DictationApp {
     /// (delivery=failed → 4.5s linger).
     pub(crate) fn fail_pill(&mut self, error: String, cx: &mut Context<Self>) {
         self.phase = Some(PillPhase::Processing);
-        self.capture = None;
+        if let Some(id) = self.capture.take() {
+            self.ended_capture = Some(id);
+        }
         self.capture_adopted = false;
         self.delivery = Some(PillDelivery::Failed);
         self.schedule_pill_close(cx);
@@ -262,6 +268,7 @@ impl DictationApp {
                         .get("captureId")
                         .and_then(Value::as_str)
                         .map(str::to_string)
+                        .filter(|id| should_adopt_capture(self.ended_capture.as_deref(), id))
                     {
                         self.session += 1;
                         self.delivery = None;
@@ -313,7 +320,7 @@ impl DictationApp {
                     && self.capture_adopted
                 {
                     self.phase = None;
-                    self.capture = None;
+                    self.ended_capture = self.capture.take();
                     self.capture_adopted = false;
                     self.delivery = None;
                     self.close_pill(cx);
@@ -353,4 +360,12 @@ impl DictationApp {
 /// missing `state` field carries no information.
 pub(crate) fn state_broadcast_ended(state: Option<&str>) -> bool {
     matches!(state, Some(s) if s != "recording" && s != "capturing")
+}
+
+/// Should an idle-phase `dictation_audio_level` event adopt its captureId?
+/// Straggler frames of a capture WE just ended (cancelled/finished — the stop
+/// lands on Engine asynchronously) must not reopen the pill, and a malformed
+/// event without an id would adopt a session we could never stop.
+pub(crate) fn should_adopt_capture(ended_capture: Option<&str>, capture_id: &str) -> bool {
+    !capture_id.is_empty() && ended_capture != Some(capture_id)
 }

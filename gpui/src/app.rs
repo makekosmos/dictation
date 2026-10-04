@@ -52,6 +52,11 @@ pub struct DictationApp {
     /// in flight — the session is finished the moment its reply arrives
     /// (worker.ts `stopAfterStart` parity).
     pub(crate) finish_after_start: bool,
+    /// The last captureId WE ended (cancel/finish/orphan stop). Its
+    /// `dictation_audio_level` frames still drain after our stop command
+    /// lands — without this tombstone a straggler re-adopts the dead
+    /// capture and pops the pill back open on "Идёт запись".
+    pub(crate) ended_capture: Option<String>,
     pub(crate) last_duration_ms: f64,
     /// Live mic RMS levels (`dictation_audio_level` WS events) — the pill's
     /// waveform ring buffer, last 120 samples like the Vue pill history.
@@ -112,6 +117,7 @@ impl DictationApp {
             capture: None,
             capture_adopted: false,
             finish_after_start: false,
+            ended_capture: None,
             last_duration_ms: 0.0,
             levels: VecDeque::new(),
             hotkey_capturing: false,
@@ -304,6 +310,7 @@ impl DictationApp {
                         .and_then(Value::as_str)
                         .map(str::to_string)
                 }) {
+                    self.ended_capture = Some(capture_id.clone());
                     self.send_command(Command::DictationStop {
                         slot: "dictation.pill.orphan_stop".into(),
                         capture_id,
@@ -322,6 +329,9 @@ impl DictationApp {
                     // Cancel during Starting: the pill is already gone —
                     // stop the just-started session instead of resurrecting.
                     if self.phase.is_none() {
+                        if capture_id.is_some() {
+                            self.ended_capture = capture_id.clone();
+                        }
                         self.send_command(Command::DictationCancel {
                             slot: "dictation.pill.cancel".into(),
                             capture_id,
@@ -455,6 +465,11 @@ impl DictationApp {
                 cx.notify();
             }
         }
+        // A reply always mutates something the status window renders (slot
+        // data, the error banner, phase). gpui repaints only on notify() —
+        // arms that skipped it (notably "@action" Err and fail_pill) left a
+        // failed click painting the old frame until an unrelated event.
+        cx.notify();
     }
 }
 
