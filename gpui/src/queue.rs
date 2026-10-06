@@ -1,6 +1,6 @@
-//! «Статистика» and «Очередь распознавания» cards for the status window —
-//! `dictation.get_stats`/`reset_stats` and the pending queue
-//! (`list_pending`/`retry`/`discard`/`retry_all`/`discard_all`).
+//! «Очередь распознавания» card — history of every transcription attempt
+//! (`list_pending`/`retry`/`discard`/`retry_all`/`discard_all`). Stats are
+//! collected by the Engine passively; the card is hidden for now.
 use ::gpui::{prelude::*, *};
 use chrono::{Datelike, Timelike};
 use serde_json::json;
@@ -53,24 +53,6 @@ fn format_day_time(day: u32, month: u32, hour: u32, minute: u32) -> String {
     format!("{day} {month}, {hour:02}:{minute:02}")
 }
 
-/// Aggregate dictation metrics (`dictation.get_stats`) — label/value pairs,
-/// pure so the rendering of a real Engine reply is unit-testable.
-pub(crate) fn stats_rows(v: &serde_json::Value) -> [(&'static str, String); 5] {
-    [
-        ("Сессий", format!("{:.0}", vnum(v, "totalSessions"))),
-        ("Слов", format!("{:.0}", vnum(v, "totalWords"))),
-        (
-            "Записано",
-            format!("{:.0} сек.", vnum(v, "totalRecordSeconds")),
-        ),
-        ("Скорость", format!("{:.0} слов/мин", vnum(v, "wpm"))),
-        (
-            "Сэкономлено",
-            format!("{:.0} сек. печати", vnum(v, "timeSavedSeconds")),
-        ),
-    ]
-}
-
 /// Inline confirm row shared by the stats, queue and model cards — shows the action's consequences
 /// and the confirming button issues the op.
 pub(crate) fn confirm_row(
@@ -102,32 +84,6 @@ pub(crate) fn confirm_row(
         ))
 }
 
-/// Aggregate dictation metrics (`dictation.get_stats`) with a reset action.
-pub(crate) fn stats_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
-    slot_or(app, Feed::Stats.slot(), |v| {
-        let mut el = crate::view::plate().child(crate::view::label_row("Статистика").child(btn(
-            "dict-stats-reset",
-            "Сбросить",
-            false,
-            cx,
-            |this, _| this.ask_confirm(Confirm::ResetStats),
-        )));
-        if matches!(&app.confirm, Some(Confirm::ResetStats)) {
-            el = el.child(confirm_row(
-                "Сбросить статистику?",
-                "Счётчики слов и сессий обнулятся",
-                "Сбросить",
-                |this| this.action("dictation.reset_stats", json!({})),
-                cx,
-            ));
-        }
-        for (label, value) in stats_rows(v) {
-            el = el.child(kv(label, value));
-        }
-        el.into_any_element()
-    })
-}
-
 /// Pending/failed recordings kept on disk after a network or key failure —
 /// per-item retry/discard plus bulk actions
 /// (`dictation.retry_all`/`discard_all`). Every item renders: the bulk
@@ -145,6 +101,22 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
         }
         for item in items.iter() {
             let uuid = vstr(item, "uuid");
+            let delivered = vstr(item, "status") == "delivered";
+            if delivered {
+                // История доставленной расшифровки: дата + текст, без кнопок.
+                let text = vstr(item, "transcript");
+                let preview: String = text.chars().take(80).collect();
+                let preview = if text.chars().count() > 80 {
+                    format!("{preview}…")
+                } else {
+                    preview
+                };
+                el = el.child(row(
+                    pending_title(&vstr(item, "createdAt")),
+                    format!("{:.0} сек. · {preview}", vnum(item, "durationSec")),
+                ));
+                continue;
+            }
             let in_flight = app.pending_inflight.contains(&uuid);
             let retry_uuid = uuid.clone();
             let discard_uuid = uuid.clone();
@@ -182,30 +154,34 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
                 ),
             );
         }
+        let any_pending = items.iter().any(|i| vstr(i, "status") != "delivered");
         if !items.is_empty() {
-            el = el.child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(btn_id("dict-retry-all", "Повторить все", {
-                        cx.listener(|this, _, _, cx| {
-                            this.action("dictation.retry_all", json!({}));
-                            cx.notify();
-                        })
-                    }))
-                    .child(btn_id("dict-discard-all", "Удалить все", {
-                        cx.listener(|this, _, _, cx| {
-                            this.ask_confirm(Confirm::DiscardAll);
-                            cx.notify();
-                        })
-                    })),
-            );
+            let mut bulk = div().flex().gap_2();
+            if any_pending {
+                bulk = bulk.child(btn_id("dict-retry-all", "Повторить все", {
+                    cx.listener(|this, _, _, cx| {
+                        this.action("dictation.retry_all", json!({}));
+                        cx.notify();
+                    })
+                }));
+            }
+            bulk = bulk.child(btn_id(
+                "dict-discard-all",
+                "Очистить список",
+                {
+                    cx.listener(|this, _, _, cx| {
+                        this.ask_confirm(Confirm::DiscardAll);
+                        cx.notify();
+                    })
+                },
+            ));
+            el = el.child(bulk);
         }
         if matches!(&app.confirm, Some(Confirm::DiscardAll)) {
             el = el.child(confirm_row(
-                "Удалить всю очередь?",
-                "Записи будут удалены без распознавания",
-                "Удалить все",
+                "Очистить список?",
+                "Все записи будут удалены без восстановления",
+                "Очистить",
                 |this| this.action("dictation.discard_all", json!({})),
                 cx,
             ));
@@ -216,9 +192,8 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
 
 #[cfg(test)]
 mod tests {
-    use super::{format_day_time, pending_title, stats_rows};
+    use super::{format_day_time, pending_title};
     use chrono::{DateTime, Datelike, Timelike};
-    use serde_json::json;
 
     /// Queue rows render a local «день месяц, чч:мм» — parse must convert to
     /// the machine's timezone and never panic on garbage.
@@ -246,28 +221,5 @@ mod tests {
         assert_eq!(pending_title("not a date"), "not a date");
         assert_eq!(pending_title("2026-13-45T99:99"), "2026-13-45");
         assert_eq!(format_day_time(1, 13, 0, 0), "1 ?, 00:00");
-    }
-
-    /// A real `get_stats` reply (all numeric fields) must render as numbers —
-    /// the values come through `vnum`, so a JSON number can't degrade to "".
-    #[test]
-    fn stats_rows_render_engine_reply() {
-        let rows = stats_rows(&json!({
-            "totalSessions": 12,
-            "totalWords": 340,
-            "totalRecordSeconds": 150,
-            "wpm": 136.0,
-            "timeSavedSeconds": 360.0,
-        }));
-        assert_eq!(
-            rows,
-            [
-                ("Сессий", "12".into()),
-                ("Слов", "340".into()),
-                ("Записано", "150 сек.".into()),
-                ("Скорость", "136 слов/мин".into()),
-                ("Сэкономлено", "360 сек. печати".into()),
-            ]
-        );
     }
 }

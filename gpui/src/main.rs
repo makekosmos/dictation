@@ -15,6 +15,7 @@ mod queue;
 mod session;
 mod settings;
 mod status_window;
+mod theme;
 mod view;
 mod worker;
 

@@ -22,6 +22,9 @@ pub enum Feed {
     Pending,
     Stats,
     Models,
+    /// Mundus appearance — dictation always mirrors the Engine theme
+    /// snapshot, independent of the global "follow apps" switch.
+    Appearance,
 }
 
 impl Feed {
@@ -31,6 +34,7 @@ impl Feed {
             Feed::Pending => "dictation.pending",
             Feed::Stats => "dictation.stats",
             Feed::Models => "dictation.models",
+            Feed::Appearance => "appearance",
         }
     }
 
@@ -40,6 +44,7 @@ impl Feed {
             Feed::Pending => "dictation.list_pending",
             Feed::Stats => "dictation.get_stats",
             Feed::Models => "dictation.list_local_models",
+            Feed::Appearance => "appearance.get",
         }
     }
 }
@@ -120,8 +125,6 @@ pub struct DictationApp {
 /// Destructive Engine op the status window asks to confirm inline — cheaper
 /// than a modal for this utility window.
 pub enum Confirm {
-    /// `dictation.reset_stats` — counters are zeroed.
-    ResetStats,
     /// `dictation.discard_all` — queued audio is deleted unrecognised.
     DiscardAll,
 }
@@ -182,7 +185,13 @@ impl DictationApp {
 
     /// Initial data loads for the status window.
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        for feed in [Feed::State, Feed::Pending, Feed::Stats, Feed::Models] {
+        for feed in [
+            Feed::State,
+            Feed::Pending,
+            Feed::Stats,
+            Feed::Models,
+            Feed::Appearance,
+        ] {
             self.load(feed);
         }
         cx.notify();
@@ -318,6 +327,13 @@ impl DictationApp {
         // commands once the Engine is back.
         self.drain_ticks += 1;
         if self.drain_ticks.is_multiple_of(66) {
+            // Mundus theme sync — no WS event for appearance changes, so
+            // the same ~2s cadence re-reads the snapshot like manager does.
+            self.call(
+                Feed::Appearance.slot(),
+                Feed::Appearance.op(),
+                serde_json::json!({}),
+            );
             for (slot, (op, params)) in self.ops.clone() {
                 if matches!(self.slots.get(&slot), Some(Slot::Failed(_)) | None) {
                     self.send_rpc(slot, op, params);

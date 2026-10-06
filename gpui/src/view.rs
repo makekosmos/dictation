@@ -23,6 +23,10 @@ fn state_label(state: &str) -> &'static str {
 
 impl Render for DictationApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Theme mirrors Mundus — re-apply when the Engine snapshot changed.
+        let appearance = self.data(Feed::Appearance.slot());
+        crate::theme::sync_theme(&appearance, window, cx);
+
         let state = self.data(Feed::State.slot());
         let mut col = div()
             .flex_1()
@@ -155,7 +159,7 @@ impl Render for DictationApp {
 
         // --- Очередь распознавания + статистика ---
         col = col.child(crate::queue::pending_card(self, cx));
-        col = col.child(crate::queue::stats_card(self, cx));
+        // Статистика собирается пассивно — карточку пока не показываем.
 
         div()
             .size_full()

@@ -50,7 +50,7 @@ fn toggle_row(
     cx: &mut Context<DictationApp>,
 ) -> Div {
     crate::view::label_row(label).child(
-        toggle(id, checked, cx, move |this, on, _| {
+        imago_gpui::toggle::toggle(id, checked, cx, move |this, on, _| {
             this.update_config(patch(on))
         })
         .accessibility_label(label),
@@ -196,7 +196,7 @@ fn hotkey_picker(
         "Нажмите клавиши…".into()
     } else {
         match vstr(cfg, "hotkey").as_str() {
-            "FnFn" => "Fn ×2".into(),
+            "FnFn" => "Fn + Fn".into(),
             other => other.into(),
         }
     };
@@ -221,8 +221,8 @@ fn hotkey_picker(
         }))
         .child(chip_text);
     if capturing {
-        chip.bg(c(ACCENT()).opacity(0.16))
-            .border_color(c(ACCENT()).opacity(0.55))
+        chip.bg(c(crate::theme::accent()).opacity(0.16))
+            .border_color(c(crate::theme::accent()).opacity(0.55))
             .text_color(c(FG()))
     } else {
         chip.bg(fade(FG(), 0.06))
@@ -244,7 +244,7 @@ pub(crate) fn seg_opt(id: &str, label: &'static str, selected: bool) -> Stateful
         .cursor_pointer()
         .child(label);
     if selected {
-        el.bg(c(ACCENT())).text_color(c(BG()))
+        el.bg(c(crate::theme::accent())).text_color(c(BG()))
     } else {
         el.bg(fade(FG(), 0.08))
             .text_color(fade(FG(), 0.75))

@@ -338,10 +338,16 @@ fn retry_skips_in_flight_ops(cx: &mut TestAppContext) {
     });
     expect_rpc(&rx, "dictation.get_stats", json!({}));
     // 66+ drain ticks with no reply: the in-flight op must not duplicate.
+    // (The ~2s cadence legitimately re-issues the appearance poll — filter
+    // it out and assert the failed slot alone isn't re-sent.)
     for _ in 0..66 {
         cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
     }
-    assert!(rx.try_recv().is_err(), "in-flight op was re-sent");
+    while let Ok(msg) = rx.try_recv() {
+        if let Command::Rpc { op, .. } = msg {
+            assert_ne!(op, "dictation.get_stats", "in-flight op was re-sent");
+        }
+    }
     // Once the op FAILS the retry does re-issue it (Engine back up).
     replies
         .send(Reply {
@@ -352,7 +358,22 @@ fn retry_skips_in_flight_ops(cx: &mut TestAppContext) {
     for _ in 0..67 {
         cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
     }
-    expect_rpc(&rx, "dictation.get_stats", json!({}));
+    // The cadence tick may legitimately re-send appearance.get first —
+    // pop until the retried stats op shows up.
+    loop {
+        match rx.try_recv() {
+            Ok(Command::Rpc {
+                op: "dictation.get_stats",
+                params,
+                ..
+            }) => {
+                assert_eq!(params, json!({}));
+                break;
+            }
+            Ok(_) => continue,
+            other => panic!("expected retried dictation.get_stats, got {other:?}"),
+        }
+    }
 }
 
 /// `call` on a dead worker channel must not leave the slot in
