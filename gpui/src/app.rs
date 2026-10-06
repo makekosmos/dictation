@@ -21,6 +21,7 @@ pub enum Feed {
     State,
     Pending,
     Stats,
+    Models,
 }
 
 impl Feed {
@@ -29,6 +30,7 @@ impl Feed {
             Feed::State => "dictation.state",
             Feed::Pending => "dictation.pending",
             Feed::Stats => "dictation.stats",
+            Feed::Models => "dictation.models",
         }
     }
 
@@ -37,6 +39,7 @@ impl Feed {
             Feed::State => "dictation.get_state",
             Feed::Pending => "dictation.list_pending",
             Feed::Stats => "dictation.get_stats",
+            Feed::Models => "dictation.list_local_models",
         }
     }
 }
@@ -177,7 +180,7 @@ impl DictationApp {
 
     /// Initial data loads for the status window.
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        for feed in [Feed::State, Feed::Pending, Feed::Stats] {
+        for feed in [Feed::State, Feed::Pending, Feed::Stats, Feed::Models] {
             self.load(feed);
         }
         cx.notify();
@@ -198,6 +201,12 @@ impl DictationApp {
     /// Patch the Engine's dictation config (applies live).
     pub fn update_config(&mut self, patch: Value) {
         self.action("dictation.update_config", patch);
+    }
+
+    /// Select a downloaded local model — `dictation.use_local_model` flips
+    /// provider to `local` and repoints localEngine/modelPath at it.
+    pub fn use_local_model(&mut self, model_id: &str) {
+        self.action("dictation.use_local_model", json!({ "modelId": model_id }));
     }
 
     /// Two-step inline confirm for a destructive action (stats reset,

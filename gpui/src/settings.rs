@@ -261,3 +261,90 @@ pub(crate) fn seg_opt(id: &str, label: &'static str, selected: bool) -> Stateful
             .hover(|s| s.bg(fade(FG(), 0.14)))
     }
 }
+
+/// «Модель» card — выбор локальной модели. Кликабельны только строки,
+/// которые Engine реально может запустить (скачаны + поддерживают
+/// транскриб + для whisper-семейства стоит whisper.cpp sidecar):
+/// `use_local_model` всё равно отклонил бы остальные, показываем причину
+/// muted-текстом вместо бесполезного клика.
+pub(crate) fn models_card(app: &DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
+    let data = app.data(Feed::Models.slot());
+    let command_installed = vbool(&data, "commandInstalled");
+    let models = vget(&data, "models")
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    let mut el = card().child(
+        div()
+            .text_size(px(12.))
+            .text_color(c(MUTED_FG()))
+            .child("Модель"),
+    );
+
+    let mut any_usable = false;
+    for model in models {
+        let id = vstr(&model, "id").to_string();
+        let name = vstr(&model, "name").to_string();
+        let downloaded = vbool(&model, "downloaded");
+        let selected = vbool(&model, "selected");
+        let supported = vbool(&model, "transcriptionSupported");
+        let usable = downloaded && supported && (id.starts_with("parakeet") || command_installed);
+        any_usable |= usable;
+
+        let status: SharedString = if selected {
+            "Выбрана".into()
+        } else if !downloaded {
+            "Не скачана".into()
+        } else if !supported {
+            "Не для распознавания".into()
+        } else if !id.starts_with("parakeet") && !command_installed {
+            "Нужен whisper.cpp".into()
+        } else {
+            "Скачана".into()
+        };
+
+        let mut row = div()
+            .id(SharedString::from(format!("model-{id}")))
+            .w_full()
+            .min_h_10()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .whitespace_nowrap()
+                    .text_size(px(13.))
+                    .child(name),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(px(12.))
+                    .when_else(
+                        selected,
+                        |el| el.text_color(c(ACCENT())),
+                        |el| el.text_color(c(MUTED_FG())),
+                    )
+                    .child(status),
+            );
+        if usable && !selected {
+            let id2 = id.clone();
+            row = row
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, _| this.use_local_model(&id2)));
+        }
+        el = el.child(row);
+    }
+    if !any_usable {
+        el = el.child(
+            div()
+                .text_size(px(12.))
+                .text_color(c(MUTED_FG()))
+                .child("Скачай модель в Manager → «Модели»"),
+        );
+    }
+    el.into_any_element()
+}

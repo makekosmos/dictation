@@ -337,8 +337,10 @@ impl DictationApp {
                 }
                 self.load(Feed::State);
             }
-            "dictation_config_changed" => {
+            // Selection/model availability changes land on both mirrors.
+            "dictation_config_changed" | "dictation.models_changed" => {
                 self.load(Feed::State);
+                self.load(Feed::Models);
             }
             "dictation_stats_changed" => {
                 self.load(Feed::Stats);

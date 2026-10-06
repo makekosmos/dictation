@@ -566,3 +566,16 @@ fn toggle_stops_recording_and_cancel_orphans_start(cx: &mut TestAppContext) {
     }
     assert!(cx.update(|cx| app.read(cx).phase.is_none()));
 }
+
+/// The models card selects via `dictation.use_local_model` (modelId param),
+/// which Engine itself rejects for non-downloaded models.
+#[gpui::test]
+fn use_local_model_sends_model_id(cx: &mut TestAppContext) {
+    let (app, rx, _replies, _events) = test_app(cx);
+    cx.update(|cx| app.update(cx, |this, _| this.use_local_model("parakeet-ultra")));
+    expect_rpc(
+        &rx,
+        "dictation.use_local_model",
+        json!({ "modelId": "parakeet-ultra" }),
+    );
+}
