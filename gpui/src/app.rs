@@ -64,6 +64,10 @@ pub struct DictationApp {
     pub error: Option<String>,
     /// Transient success line; cleared on the next action.
     pub notice: Option<String>,
+    /// Last toast-ed values — render pushes a notification only when the
+    /// message actually changes.
+    pub toasted_error: Option<String>,
+    pub toasted_notice: Option<String>,
 
     /// Dictation pill overlay window while a recording session is active.
     pub pill: Option<WindowHandle<DictationPill>>,
@@ -151,6 +155,8 @@ impl DictationApp {
             drain_ticks: 0,
             error: None,
             notice: None,
+            toasted_error: None,
+            toasted_notice: None,
             pill: None,
             status: None,
             phase: None,

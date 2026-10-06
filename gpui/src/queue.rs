@@ -93,7 +93,9 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
     slot_or(app, Feed::Pending.slot(), |v| {
         let items = varr(v, "items");
         let mut el = crate::view::plate().child(
-            crate::view::label_row("Очередь распознавания")
+            div()
+                .flex()
+                .justify_end()
                 .child(badge(format!("{}", items.len()), MUTED_FG())),
         );
         if items.is_empty() {

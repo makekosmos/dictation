@@ -3,7 +3,9 @@
 //! the recognition queue and stats in `queue.rs`. The pill overlay itself
 //! is `pill.rs` — a separate always-on-top window.
 use ::gpui::{prelude::*, *};
+use gpui_component::notification::Notification;
 use gpui_component::scroll::ScrollableElement;
+use gpui_component::WindowExt;
 
 use crate::app::{DictationApp, Feed};
 use crate::button::btn;
@@ -11,6 +13,7 @@ use crate::pill::PillPhase;
 use mundus_gpui_kit::fields::*;
 use mundus_gpui_kit::theme::*;
 
+#[cfg(test)]
 fn state_label(state: &str) -> &'static str {
     match state {
         "recording" | "capturing" => "Запись",
@@ -27,7 +30,6 @@ impl Render for DictationApp {
         let appearance = self.data(Feed::Appearance.slot());
         crate::theme::sync_theme(&appearance, window, cx);
 
-        let state = self.data(Feed::State.slot());
         let mut col = div()
             .flex_1()
             .w_full()
@@ -41,44 +43,27 @@ impl Render for DictationApp {
             .p_4()
             .overflow_y_scrollbar();
 
-        // --- Header ---
-        col = col.child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(c(MUTED_FG()))
-                        .child("Статус движка"),
-                )
-                .child({
-                    let s = vstr(&state, "state");
-                    let color = match s.as_str() {
-                        "recording" | "capturing" | "error" => DESTRUCTIVE(),
-                        "transcribing" | "waiting" => WARN(),
-                        _ => SUCCESS(),
-                    };
-                    badge(state_label(&s), color)
-                }),
-        );
-
-        if let Some(error) = &self.error {
-            col = col.child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(c(DESTRUCTIVE()))
-                    .child(error.clone()),
-            );
+        // Errors and notices go through the shared toast layer — no
+        // persistent banners in the window. Push once per change.
+        if let (Some(error), true) = (
+            self.error.clone(),
+            self.toasted_error.as_ref() != self.error.as_ref(),
+        ) {
+            self.toasted_error = Some(error.clone());
+            window.push_notification(Notification::error(error), cx);
         }
-        if let Some(notice) = &self.notice {
-            col = col.child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(c(SUCCESS()))
-                    .child(notice.clone()),
-            );
+        if self.error.is_none() {
+            self.toasted_error = None;
+        }
+        if let (Some(notice), true) = (
+            self.notice.clone(),
+            self.toasted_notice.as_ref() != self.notice.as_ref(),
+        ) {
+            self.toasted_notice = Some(notice.clone());
+            window.push_notification(Notification::success(notice), cx);
+        }
+        if self.notice.is_none() {
+            self.toasted_notice = None;
         }
 
         // --- Запись ---

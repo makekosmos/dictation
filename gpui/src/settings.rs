@@ -404,7 +404,7 @@ pub(crate) fn unload_card(app: &DictationApp, cx: &mut Context<DictationApp>) ->
                         .min_w_0()
                         .whitespace_nowrap()
                         .text_size(px(13.))
-                        .child("После простоя"),
+                        .child("Выгрузка модели"),
                 )
                 .child(opts),
         )
