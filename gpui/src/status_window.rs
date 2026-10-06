@@ -1,6 +1,6 @@
 //! Status-window helpers: opening/reopening the disposable window and
 //! surfacing a `show: false` or minimized one (native titlebar is in
-//! view.rs). Split out of app.rs (source-size gate).
+//! view.rs). Split out of app.rs.
 use ::gpui::{prelude::*, *};
 
 use crate::app::DictationApp;
