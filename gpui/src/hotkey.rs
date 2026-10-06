@@ -1,7 +1,7 @@
 //! Engine hotkey-capture flow: arming/disarming the Engine-side keyboard
 //! hook (`dictation.begin/end_hotkey_capture`) and translating its
 //! `dictation_capture_key` event into an Electron-style accelerator string.
-//! Split out of app.rs (source-size gate).
+//! Split out of app.rs.
 use ::gpui::prelude::*;
 use serde_json::{json, Value};
 

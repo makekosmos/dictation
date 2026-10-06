@@ -1,7 +1,7 @@
 //! Session state machine (Electron dictation-pill.ts parity): pill overlay
 //! lifecycle, `dictation.capture.*`/`speech.transcribe` replies and the Engine
-//! broadcast events that drive them. Split out of app.rs (source-size gate);
-//! the fields it touches live on `DictationApp`.
+//! broadcast events that drive them. The fields it touches live on
+//! `DictationApp`.
 use ::gpui::prelude::*;
 use serde_json::{json, Value};
 

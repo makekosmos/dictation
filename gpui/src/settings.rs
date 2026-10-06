@@ -1,7 +1,6 @@
 //! «Конфигурация» card for the status window: Engine config mirror plus the
 //! editable settings (`dictation.update_config` — hotkey, idle-unload,
-//! providerEnabled, injectMode, duckAudioDuringRecording, language). Split
-//! out of view.rs (source-size gate).
+//! providerEnabled, injectMode, duckAudioDuringRecording, language).
 use ::gpui::{prelude::*, *};
 use serde_json::json;
 

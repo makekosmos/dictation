@@ -1,7 +1,6 @@
 //! «Статистика» and «Очередь распознавания» cards for the status window —
 //! `dictation.get_stats`/`reset_stats` and the pending queue
-//! (`list_pending`/`retry`/`discard`/`retry_all`/`discard_all`). Split out
-//! of view.rs (source-size gate).
+//! (`list_pending`/`retry`/`discard`/`retry_all`/`discard_all`).
 use ::gpui::{prelude::*, *};
 use chrono::{Datelike, Timelike};
 use gpui_component::Disableable;
