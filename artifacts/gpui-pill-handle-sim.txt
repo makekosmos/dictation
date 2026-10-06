@@ -1,3 +1,0 @@
-=== pill window removed externally between sessions ===
-  pre-fix : pill::open calls=1 — session 2 visible overlay: false
-  post-fix: pill::open calls=2 — session 2 visible overlay: true

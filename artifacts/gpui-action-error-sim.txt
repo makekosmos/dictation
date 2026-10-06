@@ -1,3 +1,0 @@
-$ rustc --edition 2021 gpui-action-error-sim.rs && ./sim
-PRE-FIX  after successful retry: error=Some("engine unavailable") notice=Some("Выполнено.")
-POST-FIX after successful retry: error=None notice=Some("Выполнено.")

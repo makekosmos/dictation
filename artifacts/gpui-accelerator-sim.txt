@@ -1,4 +1,0 @@
-$ rustc --edition 2021 gpui-accelerator-sim.rs && ./sim
-PRE-FIX  Ctrl + VK_OEM_PLUS => "Ctrl++" -> parts ["Ctrl"]
-POST-FIX Ctrl + VK_OEM_PLUS => "Ctrl+Plus" -> parts ["Ctrl", "Plus"]
-all other OEM keys still produce two-part accelerators
