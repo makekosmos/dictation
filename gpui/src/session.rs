@@ -311,7 +311,7 @@ impl DictationApp {
             "dictation_capture_key" if self.hotkey_capturing => {
                 self.hotkey_capturing = false;
                 if let Some(accel) = crate::hotkey::build_accelerator(&event) {
-                    self.action("dictation.update_config", json!({ "hotkey": accel }));
+                    self.update_config(json!({ "hotkey": accel }));
                 }
             }
             "dictation_capture_cancelled" => {

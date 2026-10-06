@@ -203,6 +203,11 @@ impl DictationApp {
         self.call("@action", op, params);
     }
 
+    /// Patch the Engine's dictation config (applies live).
+    pub fn update_config(&mut self, patch: Value) {
+        self.action("dictation.update_config", patch);
+    }
+
     /// Two-step inline confirm for a destructive action (model delete,
     /// stats reset, queue purge).
     pub fn ask_confirm(&mut self, confirm: Confirm) {
@@ -280,10 +285,7 @@ impl DictationApp {
     /// never unload (`localIdleUnloadMs: null` in the Engine config patch).
     pub fn set_idle_unload_min(&mut self, minutes: Option<u64>) {
         let ms = minutes.map_or(Value::Null, |m| json!(m * 60_000));
-        self.action(
-            "dictation.update_config",
-            json!({ "localIdleUnloadMs": ms }),
-        );
+        self.update_config(json!({ "localIdleUnloadMs": ms }));
     }
 
     // --- Worker drain --------------------------------------------------------

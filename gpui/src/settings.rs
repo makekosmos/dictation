@@ -26,6 +26,24 @@ fn language_options(current: &str) -> [(&'static str, &'static str, bool); 3] {
     ]
 }
 
+/// One on/off setting: a labelled row whose toggle sends the
+/// `dictation.update_config` patch `patch(checked)`.
+fn toggle_row(
+    id: &'static str,
+    label: &'static str,
+    hint: &'static str,
+    checked: bool,
+    patch: impl Fn(bool) -> serde_json::Value + 'static,
+    cx: &mut Context<DictationApp>,
+) -> Div {
+    row(label, hint).child(
+        toggle(id, checked, cx, move |this, on, _| {
+            this.update_config(patch(on))
+        })
+        .accessibility_label(label),
+    )
+}
+
 pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
     let state = app.data(Feed::State.slot());
     if state.is_null() {
@@ -48,69 +66,34 @@ pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>
     );
 
     // --- Editable settings (dictation.update_config — applies live) -------
-    el = el.child(
-        row(
+    el = el
+        .child(toggle_row(
+            "dict-provider-enabled",
             "Диктовка включена",
             // Engine submits audio to the pending queue first, then checks
             // `provider_enabled` and fails the session — the recording stays
             // in the queue for a later retry (host_capture.rs::submit_audio).
             "Запись сохраняется в очередь, но не распознаётся",
-        )
-        .child(
-            toggle(
-                "dict-provider-enabled",
-                vbool(cfg, "providerEnabled"),
-                cx,
-                |this, checked, _| {
-                    this.action(
-                        "dictation.update_config",
-                        json!({ "providerEnabled": checked }),
-                    );
-                },
-            )
-            .accessibility_label("Диктовка включена"),
-        ),
-    );
-    el = el.child(
-        row(
+            vbool(cfg, "providerEnabled"),
+            |on| json!({ "providerEnabled": on }),
+            cx,
+        ))
+        .child(toggle_row(
+            "dict-autopaste",
             "Вставлять текст автоматически",
             "Иначе результат только копируется в буфер обмена",
-        )
-        .child(
-            toggle(
-                "dict-autopaste",
-                vstr(cfg, "injectMode") != "clipboard_only",
-                cx,
-                |this, checked, _| {
-                    this.action(
-                        "dictation.update_config",
-                        json!({ "injectMode": if checked { "auto_paste" } else { "clipboard_only" } }),
-                    );
-                },
-            )
-            .accessibility_label("Вставлять текст автоматически"),
-        ),
-    );
-    el = el.child(
-        row(
+            vstr(cfg, "injectMode") != "clipboard_only",
+            |on| json!({ "injectMode": if on { "auto_paste" } else { "clipboard_only" } }),
+            cx,
+        ))
+        .child(toggle_row(
+            "dict-duck",
             "Приглушать звук при записи",
             "Понижает системную громкость, пока идёт диктовка",
-        )
-        .child(
-            toggle(
-                "dict-duck",
-                vbool(cfg, "duckAudioDuringRecording"),
-                cx,
-                |this, checked, _| {
-                    this.action(
-                        "dictation.update_config",
-                        json!({ "duckAudioDuringRecording": checked }),
-                    );
-                },
-            )
-            .accessibility_label("Приглушать звук при записи"),
-        ),
-    );
+            vbool(cfg, "duckAudioDuringRecording"),
+            |on| json!({ "duckAudioDuringRecording": on }),
+            cx,
+        ));
     {
         let language = vstr(cfg, "language");
         let mut opts = div().flex().items_center().gap_1();
@@ -118,7 +101,7 @@ pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>
             opts = opts.child(
                 seg_opt(&format!("dict-lang-{code}"), label, selected).on_click(cx.listener(
                     move |this, _, _, cx| {
-                        this.action("dictation.update_config", json!({ "language": code }));
+                        this.update_config(json!({ "language": code }));
                         cx.notify();
                     },
                 )),
