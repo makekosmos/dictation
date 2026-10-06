@@ -75,12 +75,7 @@ pub(crate) fn config_card(
     }
     let cfg = vget(&state, "config");
 
-    let mut el = crate::view::plate().child(
-        div()
-            .text_size(px(12.))
-            .text_color(c(MUTED_FG()))
-            .child("Настройки (Engine)"),
-    );
+    let mut el = crate::view::plate();
 
     // --- Editable settings (dictation.update_config — applies live) -------
     el = el
@@ -281,12 +276,7 @@ pub(crate) fn models_card(
                 .collect()
         })
         .unwrap_or_default();
-    let mut el = crate::view::plate().child(
-        div()
-            .text_size(px(12.))
-            .text_color(c(MUTED_FG()))
-            .child("Модель"),
-    );
+    let mut el = crate::view::plate();
 
     if items.is_empty() {
         return el
@@ -340,14 +330,14 @@ pub(crate) fn models_card(
     });
 
     el = el.child(
-        crate::view::label_row("Локальная модель").child(
+        crate::view::label_row("Модель").child(
             div().flex_none().w(px(180.)).child(
                 Select::new(&entity)
                     .w_full()
                     .small()
                     .placeholder("Выберите модель")
                     .search_placeholder("Поиск…")
-                    .accessibility_label("Локальная модель"),
+                    .accessibility_label("Модель"),
             ),
         ),
     );
@@ -385,12 +375,6 @@ pub(crate) fn unload_card(app: &DictationApp, cx: &mut Context<DictationApp>) ->
     }
 
     crate::view::plate()
-        .child(
-            div()
-                .text_size(px(12.))
-                .text_color(c(MUTED_FG()))
-                .child("Выгрузка модели"),
-        )
         .child(
             div()
                 .w_full()
