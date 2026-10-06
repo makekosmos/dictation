@@ -10,12 +10,7 @@ local rust_glob = List(
 )
 
 local clippy_cmd =
-  "cargo clippy --locked --manifest-path gpui/Cargo.toml --all-targets --all-features"
-    + " -- -D warnings -A dead_code"
-    + " -A clippy::option_map_unit_fn -A clippy::map_flatten -A clippy::nonminimal_bool"
-    + " -A clippy::type_complexity -A clippy::collapsible_if -A clippy::let_and_return"
-    + " -A clippy::result_large_err -A clippy::duplicated_attributes -A clippy::useless_conversion"
-    + " -A clippy::panic -A clippy::assertions_on_constants"
+  "cargo clippy --locked --manifest-path gpui/Cargo.toml --all-targets --all-features -- -D warnings"
 
 // Whole-project steps: run on every push and via `hk check --all`. They take no
 // file list on purpose — a push must not skip the gate when file matching fails.
@@ -24,7 +19,6 @@ local gate = new Mapping<String, Step> {
     check = "cargo test --locked --manifest-path gpui/Cargo.toml --all-features"
   }
   ["clippy"] {
-    // Same warning baseline as agenda-gpui and the build.yml Windows clippy step.
     check = clippy_cmd
   }
   ["release-rules"] { check = "python scripts/test_release.py" }

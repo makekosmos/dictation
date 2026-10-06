@@ -107,15 +107,9 @@ jobs:
           fi
       - name: Formatting
         run: cargo fmt --manifest-path gpui/Cargo.toml -- --check
-      - name: Clippy (same warning baseline as agenda-gpui)
+      - name: Clippy
         if: runner.os == 'Windows'
-        run: >-
-          cargo clippy --locked --manifest-path gpui/Cargo.toml --all-targets --all-features
-          -- -D warnings -A dead_code
-          -A clippy::option_map_unit_fn -A clippy::map_flatten -A clippy::nonminimal_bool
-          -A clippy::type_complexity -A clippy::collapsible_if -A clippy::let_and_return
-          -A clippy::result_large_err -A clippy::duplicated_attributes -A clippy::useless_conversion
-          -A clippy::panic -A clippy::assertions_on_constants
+        run: cargo clippy --locked --manifest-path gpui/Cargo.toml --all-targets --all-features -- -D warnings
       - name: Tests
         run: cargo test --locked --release --manifest-path gpui/Cargo.toml --all-features --target "$BUILD_TARGET"
       - name: Release build
