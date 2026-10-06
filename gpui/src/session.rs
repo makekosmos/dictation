@@ -313,6 +313,9 @@ impl DictationApp {
             "dictation_escape_cancel" => {
                 if self.phase.is_some() {
                     self.dictation_cancel(cx);
+                } else {
+                    // В idle двойной Esc — dismiss застрявшего результата.
+                    self.dismiss_result(cx);
                 }
             }
             "dictation_capture_key" if self.hotkey_capturing => {

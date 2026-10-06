@@ -126,12 +126,14 @@ impl Render for DictationApp {
         if !result.is_null() {
             let text = vopt(&result, "text").unwrap_or_default();
             let delivery = vstr(&result, "delivery");
-            let mut card_el = plate().child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(c(MUTED_FG()))
-                    .child("Последняя расшифровка"),
-            );
+            let mut card_el =
+                plate().child(crate::view::label_row("Последняя расшифровка").child(btn(
+                    "dict-dismiss-result",
+                    "Скрыть",
+                    false,
+                    cx,
+                    |this, cx| this.dismiss_result(cx),
+                )));
             if let Some(err) = vopt(&result, "error") {
                 card_el = card_el.child(kv("Ошибка", err));
             }

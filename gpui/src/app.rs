@@ -234,6 +234,15 @@ impl DictationApp {
         self.queue_op("dictation.retry", uuid);
     }
 
+    /// Local dismiss for the «Последняя расшифровка» card — the feed is a
+    /// snapshot of the last attempt; clearing the slot hides the card
+    /// without touching Engine state.
+    pub fn dismiss_result(&mut self, cx: &mut Context<Self>) {
+        self.slots
+            .insert("dictation.result".into(), Slot::Ready(Value::Null));
+        cx.notify();
+    }
+
     /// See `queue_retry`.
     pub fn queue_discard(&mut self, uuid: String) {
         self.queue_op("dictation.discard", uuid);
