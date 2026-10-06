@@ -96,11 +96,9 @@ fn action_success_sets_notice_and_refreshes(cx: &mut TestAppContext) {
             assert!(this.error.is_none());
         })
     });
-    // refresh() re-issued the five data loads.
+    // refresh() re-issued the data loads.
     for op in [
         "dictation.get_state",
-        "dictation.local_status",
-        "dictation.list_local_models",
         "dictation.list_pending",
         "dictation.get_stats",
     ] {

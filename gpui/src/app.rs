@@ -19,8 +19,6 @@ pub use mundus_gpui_kit::fields::Slot;
 #[derive(Clone, Copy)]
 pub enum Feed {
     State,
-    Local,
-    Models,
     Pending,
     Stats,
 }
@@ -29,8 +27,6 @@ impl Feed {
     pub const fn slot(self) -> &'static str {
         match self {
             Feed::State => "dictation.state",
-            Feed::Local => "dictation.local",
-            Feed::Models => "dictation.models",
             Feed::Pending => "dictation.pending",
             Feed::Stats => "dictation.stats",
         }
@@ -39,8 +35,6 @@ impl Feed {
     const fn op(self) -> &'static str {
         match self {
             Feed::State => "dictation.get_state",
-            Feed::Local => "dictation.local_status",
-            Feed::Models => "dictation.list_local_models",
             Feed::Pending => "dictation.list_pending",
             Feed::Stats => "dictation.get_stats",
         }
@@ -105,7 +99,7 @@ pub struct DictationApp {
     /// must not close session N+1's pill.
     pub(crate) session: u64,
     /// Destructive action awaiting an inline confirmation in the status
-    /// window (model delete, stats reset, queue purge).
+    /// window (stats reset, queue purge).
     pub confirm: Option<Confirm>,
     /// Queue items with a retry/discard op in flight — their row buttons
     /// stay disabled until the refreshed `dictation.pending` list lands
@@ -117,8 +111,6 @@ pub struct DictationApp {
 /// Destructive Engine op the status window asks to confirm inline — cheaper
 /// than a modal for this utility window.
 pub enum Confirm {
-    /// `dictation.delete_local_model` for this model id.
-    DeleteModel(String),
     /// `dictation.reset_stats` — counters are zeroed.
     ResetStats,
     /// `dictation.discard_all` — queued audio is deleted unrecognised.
@@ -179,13 +171,7 @@ impl DictationApp {
 
     /// Initial data loads for the status window.
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        for feed in [
-            Feed::State,
-            Feed::Local,
-            Feed::Models,
-            Feed::Pending,
-            Feed::Stats,
-        ] {
+        for feed in [Feed::State, Feed::Pending, Feed::Stats] {
             self.load(feed);
         }
         cx.notify();
@@ -208,8 +194,8 @@ impl DictationApp {
         self.action("dictation.update_config", patch);
     }
 
-    /// Two-step inline confirm for a destructive action (model delete,
-    /// stats reset, queue purge).
+    /// Two-step inline confirm for a destructive action (stats reset,
+    /// queue purge).
     pub fn ask_confirm(&mut self, confirm: Confirm) {
         self.confirm = Some(confirm);
     }

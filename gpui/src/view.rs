@@ -4,7 +4,6 @@
 //! is `pill.rs` — a separate always-on-top window.
 use ::gpui::{prelude::*, *};
 use gpui_component::scroll::ScrollableElement;
-use serde_json::json;
 
 use crate::app::{DictationApp, Feed};
 use crate::pill::PillPhase;
@@ -175,9 +174,6 @@ impl Render for DictationApp {
         col = col.child(crate::queue::pending_card(self, cx));
         col = col.child(crate::queue::stats_card(self, cx));
 
-        // --- Локальные модели ---
-        col = col.child(models_card(self, cx));
-
         div()
             .size_full()
             .flex()
@@ -221,112 +217,6 @@ fn titlebar(window: &Window) -> Div {
         .when(!cfg!(target_os = "macos"), |bar| {
             bar.child(imago_gpui::chrome::window_controls())
         })
-}
-
-fn models_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
-    let local = app.data(Feed::Local.slot());
-    let models = app.data(Feed::Models.slot());
-    if local.is_null() && models.is_null() {
-        return div().into_any_element();
-    }
-    let mut el = card().child(
-        div()
-            .text_size(px(12.))
-            .text_color(c(MUTED_FG()))
-            .child("Локальная модель (on-device STT)"),
-    );
-    if !local.is_null() {
-        el = el.child(kv(
-            "Движок",
-            format!(
-                "{} · {}",
-                if vbool(&local, "warm") {
-                    "прогрет"
-                } else {
-                    "холодный"
-                },
-                vopt(&local, "backend").unwrap_or_else(|| "—".into())
-            ),
-        ));
-        if let Some(model) = vopt(&local, "loadedModel") {
-            el = el.child(kv("Загружена", model));
-        }
-    }
-    for model in varr(&models, "models").iter().take(10) {
-        let id = vstr(model, "id");
-        let use_id = id.clone();
-        let download_id = id.clone();
-        let ask_id = id.clone();
-        let mut r = row(
-            vstr(model, "name"),
-            format!(
-                "{:.0} МБ{}",
-                vnum(model, "sizeMb"),
-                if vbool(model, "recommended") {
-                    " · рекомендуется"
-                } else {
-                    ""
-                }
-            ),
-        );
-        if vbool(model, "selected") {
-            r = r.child(badge("Выбрана", SUCCESS()));
-        } else if vbool(model, "downloaded") {
-            r = r
-                .child(badge("Скачана", MUTED_FG()))
-                .child(btn_id(
-                    &format!("dict-use-{id}"),
-                    "Использовать",
-                    {
-                        cx.listener(move |this, _, _, cx| {
-                            this.action("dictation.use_local_model", json!({"modelId": use_id}));
-                            cx.notify();
-                        })
-                    },
-                ))
-                .child(btn_id(&format!("dict-del-{id}"), "Удалить", {
-                    cx.listener(move |this, _, _, cx| {
-                        this.ask_confirm(crate::app::Confirm::DeleteModel(ask_id.clone()));
-                        cx.notify();
-                    })
-                }));
-        } else {
-            r = r.child(btn_id(&format!("dict-dl-{id}"), "Скачать", {
-                cx.listener(move |this, _, _, cx| {
-                    this.action(
-                        "dictation.download_local_model",
-                        json!({"modelId": download_id, "select": true}),
-                    );
-                    cx.notify();
-                })
-            }));
-        }
-        el = el.child(r);
-    }
-    if let Some(crate::app::Confirm::DeleteModel(delete_id)) = &app.confirm {
-        let id = delete_id.clone();
-        el = el.child(crate::queue::confirm_row(
-            &format!("Удалить {delete_id}?"),
-            "Файлы модели будут удалены с диска",
-            "Удалить",
-            move |this| this.action("dictation.delete_local_model", json!({"modelId": id})),
-            cx,
-        ));
-    }
-    // Live download progress from the WS event slot
-    // (`dictation_local_model_download_progress`, app.rs::handle_engine_event).
-    let download = app.data("dictation.download");
-    if !download.is_null() {
-        let model = vopt(&download, "modelId").unwrap_or_else(|| "модель".into());
-        let percent = vnum(&download, "percent");
-        let text = if percent > 0.0 {
-            format!("{model} — {percent:.0}%")
-        } else {
-            format!("{model}…")
-        };
-        el = el.child(kv("Скачивание", text));
-    }
-    el.into_any_element()
 }
 
 /// Recording length for the "Последняя расшифровка" card — m:ss (h:mm:ss

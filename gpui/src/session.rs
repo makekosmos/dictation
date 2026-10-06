@@ -346,19 +346,6 @@ impl DictationApp {
             "dictation_pending_changed" => {
                 self.load(Feed::Pending);
             }
-            // Progress ticks stream per chunk — stash the payload for the
-            // view rather than re-issuing RPCs; started resets the slot and
-            // complete/failed clear it while refreshing the model list.
-            "dictation_local_model_download_progress"
-            | "dictation_local_model_download_started" => {
-                self.slots
-                    .insert("dictation.download".into(), Slot::Ready(event));
-            }
-            "dictation_local_model_download_complete" | "dictation_local_model_download_failed" => {
-                self.slots.remove("dictation.download");
-                self.load(Feed::Local);
-                self.load(Feed::Models);
-            }
             _ => {}
         }
     }
