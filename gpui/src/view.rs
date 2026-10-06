@@ -86,7 +86,7 @@ impl Render for DictationApp {
             None => "Начать запись",
         };
         let busy = phase.is_some();
-        let record = card().child(
+        let record = plate().child(
             label_row("Диктовка")
                 .child(btn("dictation-toggle", label, true, cx, |this, cx| {
                     this.dictation_toggle(cx);
@@ -122,7 +122,7 @@ impl Render for DictationApp {
         if !result.is_null() {
             let text = vopt(&result, "text").unwrap_or_default();
             let delivery = vstr(&result, "delivery");
-            let mut card_el = card().child(
+            let mut card_el = plate().child(
                 div()
                     .text_size(px(12.))
                     .text_color(c(MUTED_FG()))
@@ -165,6 +165,12 @@ impl Render for DictationApp {
             .child(titlebar(window))
             .child(col)
     }
+}
+
+/// Imago settings plaque (r12 soft fg-wash card, no border) — the shared
+/// card chrome for the status window, same component manager uses.
+pub(crate) fn plate() -> Div {
+    imago_gpui::settings::UiStyle::default().card()
 }
 
 /// Label-only row: the kit's `row` minus the muted subtitle line.

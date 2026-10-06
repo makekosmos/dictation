@@ -105,7 +105,7 @@ pub(crate) fn confirm_row(
 /// Aggregate dictation metrics (`dictation.get_stats`) with a reset action.
 pub(crate) fn stats_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
     slot_or(app, Feed::Stats.slot(), |v| {
-        let mut el = card().child(crate::view::label_row("Статистика").child(btn(
+        let mut el = crate::view::plate().child(crate::view::label_row("Статистика").child(btn(
             "dict-stats-reset",
             "Сбросить",
             false,
@@ -136,7 +136,7 @@ pub(crate) fn stats_card(app: &mut DictationApp, cx: &mut Context<DictationApp>)
 pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
     slot_or(app, Feed::Pending.slot(), |v| {
         let items = varr(v, "items");
-        let mut el = card().child(
+        let mut el = crate::view::plate().child(
             crate::view::label_row("Очередь распознавания")
                 .child(badge(format!("{}", items.len()), MUTED_FG())),
         );

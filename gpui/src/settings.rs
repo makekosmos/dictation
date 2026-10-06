@@ -71,7 +71,7 @@ pub(crate) fn config_card(
 ) -> AnyElement {
     let state = app.data(Feed::State.slot());
     if state.is_null() {
-        return card()
+        return crate::view::plate()
             .child(
                 div()
                     .text_size(px(12.))
@@ -82,7 +82,7 @@ pub(crate) fn config_card(
     }
     let cfg = vget(&state, "config");
 
-    let mut el = card().child(
+    let mut el = crate::view::plate().child(
         div()
             .text_size(px(12.))
             .text_color(c(MUTED_FG()))
@@ -175,7 +175,7 @@ pub(crate) fn config_card(
 pub(crate) fn hotkey_card(app: &DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
     let state = app.data(Feed::State.slot());
     if state.is_null() {
-        return card()
+        return crate::view::plate()
             .child(
                 div()
                     .text_size(px(12.))
@@ -185,7 +185,7 @@ pub(crate) fn hotkey_card(app: &DictationApp, cx: &mut Context<DictationApp>) ->
             .into_any_element();
     }
     let cfg = vget(&state, "config");
-    card()
+    crate::view::plate()
         .child(crate::view::label_row("Хоткей").child(hotkey_picker(app, cfg, cx)))
         .into_any_element()
 }
@@ -287,7 +287,7 @@ pub(crate) fn models_card(
                 .collect()
         })
         .unwrap_or_default();
-    let mut el = card().child(
+    let mut el = crate::view::plate().child(
         div()
             .text_size(px(12.))
             .text_color(c(MUTED_FG()))
@@ -390,7 +390,7 @@ pub(crate) fn unload_card(app: &DictationApp, cx: &mut Context<DictationApp>) ->
         );
     }
 
-    card()
+    crate::view::plate()
         .child(
             div()
                 .text_size(px(12.))
