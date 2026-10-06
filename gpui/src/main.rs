@@ -6,6 +6,7 @@
 
 mod app;
 mod assets;
+mod button;
 mod hotkey;
 mod pill;
 mod pill_wave;

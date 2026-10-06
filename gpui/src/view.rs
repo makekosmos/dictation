@@ -6,6 +6,7 @@ use ::gpui::{prelude::*, *};
 use gpui_component::scroll::ScrollableElement;
 
 use crate::app::{DictationApp, Feed};
+use crate::button::btn;
 use crate::pill::PillPhase;
 use mundus_gpui_kit::fields::*;
 use mundus_gpui_kit::theme::*;
@@ -81,21 +82,15 @@ impl Render for DictationApp {
 
         // --- Запись ---
         let phase = self.phase;
-        let (label, hint): (&str, &str) = match phase {
-            Some(PillPhase::Starting) => ("Запуск записи…", "Engine открывает захват микрофона"),
-            Some(PillPhase::Recording) => (
-                "Остановить запись",
-                "Идёт запись — pill-окно у нижнего края экрана",
-            ),
-            Some(PillPhase::Processing) => ("Распознаю…", "capture.stop → speech.transcribe"),
-            None => (
-                "Начать запись",
-                "WASAPI-захват на стороне Engine, результат вставляется/копируется по injectMode",
-            ),
+        let label = match phase {
+            Some(PillPhase::Starting) => "Запуск записи…",
+            Some(PillPhase::Recording) => "Остановить запись",
+            Some(PillPhase::Processing) => "Распознаю…",
+            None => "Начать запись",
         };
         let busy = phase.is_some();
         let mut record = card().child(
-            row("Диктовка", hint)
+            label_row("Диктовка")
                 .child(btn("dictation-toggle", label, true, cx, |this, cx| {
                     this.dictation_toggle(cx);
                 }))
@@ -182,6 +177,23 @@ impl Render for DictationApp {
             .child(titlebar(window))
             .child(col)
     }
+}
+
+/// Label-only row: the kit's `row` minus the muted subtitle line.
+pub(crate) fn label_row(label: impl Into<String>) -> Div {
+    div()
+        .w_full()
+        .min_h_10()
+        .flex()
+        .items_center()
+        .gap_3()
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(px(13.))
+                .child(label.into()),
+        )
 }
 
 /// Shared imago chrome titlebar (Agenda/Manager pattern): a

@@ -3,10 +3,10 @@
 //! (`list_pending`/`retry`/`discard`/`retry_all`/`discard_all`).
 use ::gpui::{prelude::*, *};
 use chrono::{Datelike, Timelike};
-use gpui_component::Disableable;
 use serde_json::json;
 
 use crate::app::{Confirm, DictationApp, Feed};
+use crate::button::{btn, btn_id};
 use mundus_gpui_kit::fields::*;
 use mundus_gpui_kit::theme::*;
 
@@ -105,15 +105,13 @@ pub(crate) fn confirm_row(
 /// Aggregate dictation metrics (`dictation.get_stats`) with a reset action.
 pub(crate) fn stats_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
     slot_or(app, Feed::Stats.slot(), |v| {
-        let mut el = card().child(
-            row("Статистика", "Считается по всем сессиям диктовки").child(btn(
-                "dict-stats-reset",
-                "Сбросить",
-                false,
-                cx,
-                |this, _| this.ask_confirm(Confirm::ResetStats),
-            )),
-        );
+        let mut el = card().child(crate::view::label_row("Статистика").child(btn(
+            "dict-stats-reset",
+            "Сбросить",
+            false,
+            cx,
+            |this, _| this.ask_confirm(Confirm::ResetStats),
+        )));
         if matches!(&app.confirm, Some(Confirm::ResetStats)) {
             el = el.child(confirm_row(
                 "Сбросить статистику?",
@@ -139,11 +137,8 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
     slot_or(app, Feed::Pending.slot(), |v| {
         let items = varr(v, "items");
         let mut el = card().child(
-            row(
-                "Очередь распознавания",
-                "Записи, не дошедшие до распознавания (сбой сети или ключа)",
-            )
-            .child(badge(format!("{}", items.len()), MUTED_FG())),
+            crate::view::label_row("Очередь распознавания")
+                .child(badge(format!("{}", items.len()), MUTED_FG())),
         );
         if items.is_empty() {
             el = el.child(empty("Очередь пуста"));

@@ -5,6 +5,7 @@ use ::gpui::{prelude::*, *};
 use serde_json::json;
 
 use crate::app::{DictationApp, Feed};
+use crate::button::{btn, btn_id};
 use mundus_gpui_kit::fields::*;
 use mundus_gpui_kit::theme::*;
 
@@ -31,12 +32,11 @@ fn language_options(current: &str) -> [(&'static str, &'static str, bool); 3] {
 fn toggle_row(
     id: &'static str,
     label: &'static str,
-    hint: &'static str,
     checked: bool,
     patch: impl Fn(bool) -> serde_json::Value + 'static,
     cx: &mut Context<DictationApp>,
 ) -> Div {
-    row(label, hint).child(
+    crate::view::label_row(label).child(
         toggle(id, checked, cx, move |this, on, _| {
             this.update_config(patch(on))
         })
@@ -70,10 +70,6 @@ pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>
         .child(toggle_row(
             "dict-provider-enabled",
             "Диктовка включена",
-            // Engine submits audio to the pending queue first, then checks
-            // `provider_enabled` and fails the session — the recording stays
-            // in the queue for a later retry (host_capture.rs::submit_audio).
-            "Запись сохраняется в очередь, но не распознаётся",
             vbool(cfg, "providerEnabled"),
             |on| json!({ "providerEnabled": on }),
             cx,
@@ -81,7 +77,6 @@ pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>
         .child(toggle_row(
             "dict-autopaste",
             "Вставлять текст автоматически",
-            "Иначе результат только копируется в буфер обмена",
             vstr(cfg, "injectMode") != "clipboard_only",
             |on| json!({ "injectMode": if on { "auto_paste" } else { "clipboard_only" } }),
             cx,
@@ -89,7 +84,6 @@ pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>
         .child(toggle_row(
             "dict-duck",
             "Приглушать звук при записи",
-            "Понижает системную громкость, пока идёт диктовка",
             vbool(cfg, "duckAudioDuringRecording"),
             |on| json!({ "duckAudioDuringRecording": on }),
             cx,
@@ -107,7 +101,7 @@ pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>
                 )),
             );
         }
-        el = el.child(row("Язык распознавания", "«Авто» — определить автоматически").child(opts));
+        el = el.child(crate::view::label_row("Язык распознавания").child(opts));
     }
 
     // --- Read-only mirror + hotkey/idle-unload (already wired) ------------
