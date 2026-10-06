@@ -6,7 +6,7 @@ and the settings UI, and talks to the Engine directly over RPC/WS
 (`dictation.capture.*`, `dictation.speech.transcribe`, `dictation.cancel`, the
 `dictation.*` config/state operations). Microphone, global hotkey,
 transcription providers and text injection remain Engine-owned (cortex
-`runtime/src/dictation/`); the app never accesses them directly. Rules for agents: [AGENTS.md](AGENTS.md).
+`runtime/crates/engine-dictation/`); the app never accesses them directly. Rules for agents: [AGENTS.md](AGENTS.md).
 
 ```powershell
 cargo fmt --manifest-path gpui/Cargo.toml -- --check

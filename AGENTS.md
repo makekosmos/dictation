@@ -26,7 +26,7 @@
   провайдеры распознавания, ключи API и вставка текста принадлежат Engine
   (`cortex/runtime/crates/engine-dictation/`). Нужна новая возможность — это
   новая операция Engine в cortex, а не обход в приложении.
-- Ключи API хранятся в cortex; приложение не читает и не стирает их напрямую.
+- Ключи API хранятся в cortex, приложению они не нужны: не добавляй работу с ними сюда.
 - `DICTATION_GPUI_OFFSCREEN` убирает окно с экрана для headless-запуска.
 
 ## Запуск
@@ -42,9 +42,10 @@ cortex. Системные пакеты для Linux перечислены в �
 ## Проверки
 
 CI (`.github/workflows/build.yml`) запускается на каждый PR и на push в `main`:
-fmt, clippy с `-D warnings`, тесты и release-сборка на Windows, Linux и
-macOS; плюс `python scripts/test_release.py`. Ночью (00:00 МСК) тот же
-workflow выпускает релиз.
+fmt, тесты и release-сборка на Windows, Linux и macOS, clippy с
+`-D warnings` — только на Windows; плюс `python scripts/test_release.py`.
+Ночью (00:00 МСК) тот же workflow выпускает релиз, если исходники изменились
+с прошлого.
 
 Локально те же проверки гонит `hk` (`hk.pkl`):
 
@@ -67,8 +68,10 @@ python scripts/test_release.py
 - `gpui` (псевдоним `gpui-kit`) и `gpui-component` закреплены точными версиями
   и должны совпадать с cortex/manager-gpui, agenda-gpui и memoria-gpui: две
   версии gpui в одной сборке — ошибка типов. Поднимай вместе.
-  `imago-gpui` и `mundus-gpui-kit` закреплены по rev; их ревизии сейчас
-  отличаются от остальных приложений — выровняй при очередном обновлении.
+  `imago-gpui` и `mundus-gpui-kit` закреплены по rev; ревизии сейчас
+  отличаются от остальных приложений, а `mundus-gpui-kit` берётся из
+  `makekosmos/kosmos-gpui-kit`, не из imago — выровняй при очередном
+  обновлении. Здесь нет `deny.toml` и `cargo shear`.
 - Строки интерфейса — русские. Используй токены и компоненты
   imago/`mundus-gpui-kit`, сохраняй клавиатурную навигацию, фокус и доступные
   имена.
@@ -78,5 +81,5 @@ python scripts/test_release.py
 
 Теги вида `gpui-vX.Y.Z`; источник версии — `gpui/Cargo.toml`. Релиз выпускает
 workflow по расписанию: версию вручную не меняй, тег не ставь и релиз не
-публикуй без просьбы. Уже опубликованные версии не перезаписываются; старая
+публикуй без просьбы. Опубликованные (не draft) версии не перезаписываются; старая
 линия `vX.Y.Z` (Vue `.kspkg`) закрыта и не используется.
