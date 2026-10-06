@@ -40,13 +40,6 @@ impl SearchableListItem for ModelItem {
 /// The lazily-created select entity stored on `DictationApp`.
 pub(crate) type ModelSelect = Entity<SelectState<SearchableVec<ModelItem>>>;
 
-fn trigger_label(mode: &str) -> &'static str {
-    match mode {
-        "push_to_talk" => "Удержание (push-to-talk)",
-        _ => "Переключение (toggle)",
-    }
-}
-
 /// One on/off setting: a labelled row whose toggle sends the
 /// `dictation.update_config` patch `patch(checked)`.
 fn toggle_row(
@@ -160,9 +153,7 @@ pub(crate) fn config_card(
         );
     }
 
-    // --- Read-only mirror + idle-unload (already wired) -------------------
-    el = el.child(kv("Режим", trigger_label(&vstr(cfg, "triggerMode"))));
-    el = el.child(kv("Провайдер", vstr(cfg, "provider")));
+    // --- Read-only mirror ------------------------------------------------
 
     if let Some(err) = vopt(&state, "lastError") {
         el = el.child(kv("Последняя ошибка", err));
@@ -204,7 +195,10 @@ fn hotkey_picker(
     let chip_text: SharedString = if capturing {
         "Нажмите клавиши…".into()
     } else {
-        vstr(cfg, "hotkey").into()
+        match vstr(cfg, "hotkey").as_str() {
+            "FnFn" => "Fn ×2".into(),
+            other => other.into(),
+        }
     };
     let chip = div()
         .id("dict-hotkey-capture")

@@ -308,6 +308,13 @@ impl DictationApp {
                     self.levels.push_back(level);
                 }
             }
+            // Double-Esc anywhere cancels the live session (macOS + Windows
+            // watchers emit this while the hotkey monitor is armed).
+            "dictation_escape_cancel" => {
+                if self.phase.is_some() {
+                    self.dictation_cancel(cx);
+                }
+            }
             "dictation_capture_key" if self.hotkey_capturing => {
                 self.hotkey_capturing = false;
                 if let Some(accel) = crate::hotkey::build_accelerator(&event) {
