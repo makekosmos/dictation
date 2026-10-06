@@ -1,6 +1,0 @@
-PRE-FIX  @action Err: error set, repaints=0 (banner invisible)
-POST-FIX @action Err: error set, repaints=1 (banner paints now)
-PRE-FIX  fail_pill: phase=Some("Processing") repaints=0 (label still shows старое до таймера)
-POST-FIX fail_pill: phase=Some("Processing") repaints=1 (repaint сразу)
-PRE-FIX  result Ok: delivery=Some("Pasted") repaints=0 (card deferred)
-POST-FIX result Ok: repaints=1

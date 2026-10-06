@@ -1,3 +1,0 @@
-PRE-FIX  straggler level for cancelled cap-1 → phase=Some("Recording") pill_open=true (adopted a dead session)
-POST-FIX straggler level for cancelled cap-1 → phase=None pill_open=false (ignored)
-POST-FIX foreign capture cap-foreign → phase=Some("Recording") pill_open=true (still adopts)
