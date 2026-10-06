@@ -92,11 +92,46 @@ pub(crate) fn confirm_row(
 pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
     slot_or(app, Feed::Pending.slot(), |v| {
         let items = varr(v, "items");
-        let mut el = crate::view::plate().child(
+        let open = app.queue_open;
+        let header = div()
+            .id("dict-queue-toggle")
+            .w_full()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(px(13.))
+                    .child("История распознаваний"),
+            )
+            .child(badge(format!("{}", items.len()), MUTED_FG()))
+            .child(
+                gpui_component::Icon::default()
+                    .path(if open {
+                        "icons/chevron-up.svg"
+                    } else {
+                        "icons/chevron-down.svg"
+                    })
+                    .size(px(16.))
+                    .text_color(c(MUTED_FG())),
+            )
+            .cursor_pointer()
+            .hover(|style| style.opacity(0.8))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.queue_open = !this.queue_open;
+                cx.notify();
+            }));
+        let mut el = crate::view::plate().gap(px(0.)).child(header);
+        if !open {
+            return el.into_any_element();
+        }
+        el = el.child(
             div()
-                .flex()
-                .justify_end()
-                .child(badge(format!("{}", items.len()), MUTED_FG())),
+                .w_full()
+                .border_t_1()
+                .border_color(fade(BORDER(), 0.6)),
         );
         if items.is_empty() {
             el = el.child(empty("Очередь пуста"));

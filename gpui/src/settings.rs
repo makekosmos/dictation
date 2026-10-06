@@ -5,7 +5,7 @@ use ::gpui::{prelude::*, *};
 use gpui_component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_component::select::{Select, SelectEvent, SelectState};
 use gpui_component::Sizable;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::app::{DictationApp, Feed};
 use crate::languages::{language_code, language_items, LangItem};
@@ -59,7 +59,7 @@ fn toggle_row(
 
 pub(crate) fn config_card(
     app: &mut DictationApp,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut Context<DictationApp>,
 ) -> AnyElement {
     let state = app.data(Feed::State.slot());
@@ -100,60 +100,74 @@ pub(crate) fn config_card(
             |on| json!({ "duckAudioDuringRecording": on }),
             cx,
         ));
-    {
-        let language = vstr(cfg, "language");
-        // The Select entity needs `&mut Window` at construction, so it is
-        // created lazily on the first render with config loaded, then kept
-        // on DictationApp (it must outlive individual renders).
-        if app.lang_select.is_none() {
-            let entity = cx.new(|cx| {
-                SelectState::new(SearchableVec::new(language_items()), None, window, cx)
-                    .searchable(true)
-            });
-            // `detach` keeps the Confirm → update_config wiring alive for
-            // the entity's lifetime — the entity itself is held on the app.
-            cx.subscribe(
-                &entity,
-                |this, _entity, event: &SelectEvent<SearchableVec<LangItem>>, _cx| {
-                    if let SelectEvent::Confirm(Some(code)) = event {
-                        this.update_config(json!({ "language": code }));
-                    }
-                },
-            )
-            .detach();
-            app.lang_select = Some(entity);
-        }
-        let entity = app.lang_select.clone().unwrap();
-        // Mirror `config.language` (first paint, external edits). Programmatic
-        // sets don't emit Confirm, so this never rewrites the Engine value;
-        // an unknown language deselects to the placeholder instead.
-        let selected: Option<&str> = entity.read(cx).selected_value().copied();
-        if selected != Some(language.as_str()) {
-            entity.update(cx, |state, cx| match language_code(&language) {
-                Some(code) => state.set_selected_value(&code, window, cx),
-                None => state.set_selected_index(None, window, cx),
-            });
-        }
-        el = el.child(
-            crate::view::label_row("Язык распознавания").child(
-                div().flex_none().w(px(180.)).child(
-                    Select::new(&entity)
-                        .w_full()
-                        .small()
-                        .placeholder("Выберите язык")
-                        .search_placeholder("Поиск…")
-                        .accessibility_label("Язык распознавания"),
-                ),
-            ),
-        );
-    }
-
     // --- Read-only mirror ------------------------------------------------
 
     if let Some(err) = vopt(&state, "lastError") {
         el = el.child(kv("Последняя ошибка", err));
     }
     el.into_any_element()
+}
+
+/// «Язык» row — same searchable Select, reused inside the merged
+/// language+model card.
+fn language_row(
+    app: &mut DictationApp,
+    cfg: &Value,
+    window: &mut Window,
+    cx: &mut Context<DictationApp>,
+) -> Div {
+    let language = vstr(cfg, "language");
+    // The Select entity needs `&mut Window` at construction, so it is
+    // created lazily on the first render with config loaded, then kept
+    // on DictationApp (it must outlive individual renders).
+    if app.lang_select.is_none() {
+        let entity = cx.new(|cx| {
+            SelectState::new(SearchableVec::new(language_items()), None, window, cx)
+                .searchable(true)
+        });
+        // `detach` keeps the Confirm → update_config wiring alive for
+        // the entity's lifetime — the entity itself is held on the app.
+        cx.subscribe(
+            &entity,
+            |this, _entity, event: &SelectEvent<SearchableVec<LangItem>>, _cx| {
+                if let SelectEvent::Confirm(Some(code)) = event {
+                    this.update_config(json!({ "language": code }));
+                }
+            },
+        )
+        .detach();
+        app.lang_select = Some(entity);
+    }
+    let entity = app.lang_select.clone().unwrap();
+    // Mirror `config.language` (first paint, external edits). Programmatic
+    // sets don't emit Confirm, so this never rewrites the Engine value;
+    // an unknown language deselects to the placeholder instead.
+    let selected: Option<&str> = entity.read(cx).selected_value().copied();
+    if selected != Some(language.as_str()) {
+        entity.update(cx, |state, cx| match language_code(&language) {
+            Some(code) => state.set_selected_value(&code, window, cx),
+            None => state.set_selected_index(None, window, cx),
+        });
+    }
+    crate::view::label_row("Язык").child(
+        div().flex_none().w(px(180.)).child(
+            Select::new(&entity)
+                .w_full()
+                .small()
+                .placeholder("Выберите язык")
+                .search_placeholder("Поиск…")
+                .accessibility_label("Язык распознавания"),
+        ),
+    )
+}
+
+/// Hairline between two rows inside one plate — the same divider Manager
+/// draws between model rows (`fade(BORDER(), 0.6)`).
+fn hairline() -> Div {
+    div()
+        .w_full()
+        .border_t_1()
+        .border_color(fade(BORDER(), 0.6))
 }
 
 /// «Хоткей» card: the hotkey picker lives outside «Настройки (Engine)» —
@@ -251,11 +265,13 @@ pub(crate) fn seg_opt(id: &str, label: &'static str, selected: bool) -> Stateful
 /// и «Язык распознавания». В списке только модели, которые Engine реально
 /// может запустить: скачанные, поддерживающие транскриб и для
 /// whisper-семейства — при наличии whisper.cpp sidecar'а.
-pub(crate) fn models_card(
+pub(crate) fn language_model_card(
     app: &mut DictationApp,
     window: &mut Window,
     cx: &mut Context<DictationApp>,
 ) -> AnyElement {
+    let state = app.data(Feed::State.slot());
+    let cfg = vget(&state, "config");
     let data = app.data(Feed::Models.slot());
     let command_installed = vbool(&data, "commandInstalled");
     let items: Vec<ModelItem> = vget(&data, "models")
@@ -276,12 +292,16 @@ pub(crate) fn models_card(
                 .collect()
         })
         .unwrap_or_default();
-    let mut el = crate::view::plate();
+    let mut el = crate::view::plate()
+        .gap(px(0.))
+        .child(language_row(app, cfg, window, cx))
+        .child(hairline());
 
     if items.is_empty() {
         return el
             .child(
                 div()
+                    .py(px(8.))
                     .text_size(px(12.))
                     .text_color(c(MUTED_FG()))
                     .child("Скачай модель в Manager → «Модели»"),

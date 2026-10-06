@@ -68,6 +68,9 @@ pub struct DictationApp {
     /// message actually changes.
     pub toasted_error: Option<String>,
     pub toasted_notice: Option<String>,
+    /// «Очередь распознавания» card expanded/collapsed like Manager's
+    /// storage block — collapsed by default.
+    pub queue_open: bool,
 
     /// Dictation pill overlay window while a recording session is active.
     pub pill: Option<WindowHandle<DictationPill>>,
@@ -157,6 +160,7 @@ impl DictationApp {
             notice: None,
             toasted_error: None,
             toasted_notice: None,
+            queue_open: false,
             pill: None,
             status: None,
             phase: None,
