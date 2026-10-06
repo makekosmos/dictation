@@ -4,7 +4,7 @@
 use ::gpui::{prelude::*, *};
 use serde_json::json;
 
-use crate::app::DictationApp;
+use crate::app::{DictationApp, Feed};
 use mundus_gpui_kit::fields::*;
 use mundus_gpui_kit::theme::*;
 
@@ -27,7 +27,7 @@ fn language_options(current: &str) -> [(&'static str, &'static str, bool); 3] {
 }
 
 pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
-    let state = app.data("dictation.state");
+    let state = app.data(Feed::State.slot());
     if state.is_null() {
         return card()
             .child(

@@ -6,7 +6,7 @@ use chrono::{Datelike, Timelike};
 use gpui_component::Disableable;
 use serde_json::json;
 
-use crate::app::{Confirm, DictationApp};
+use crate::app::{Confirm, DictationApp, Feed};
 use mundus_gpui_kit::fields::*;
 use mundus_gpui_kit::theme::*;
 
@@ -104,7 +104,7 @@ pub(crate) fn confirm_row(
 
 /// Aggregate dictation metrics (`dictation.get_stats`) with a reset action.
 pub(crate) fn stats_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
-    slot_or(app, "dictation.stats", |v| {
+    slot_or(app, Feed::Stats.slot(), |v| {
         let mut el = card().child(
             row("Статистика", "Считается по всем сессиям диктовки").child(btn(
                 "dict-stats-reset",
@@ -136,7 +136,7 @@ pub(crate) fn stats_card(app: &mut DictationApp, cx: &mut Context<DictationApp>)
 /// actions cover the whole queue, so silently truncating the list would lie
 /// about what they affect.
 pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
-    slot_or(app, "dictation.pending", |v| {
+    slot_or(app, Feed::Pending.slot(), |v| {
         let items = varr(v, "items");
         let mut el = card().child(
             row(

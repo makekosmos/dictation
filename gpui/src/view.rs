@@ -6,7 +6,7 @@ use ::gpui::{prelude::*, *};
 use gpui_component::scroll::ScrollableElement;
 use serde_json::json;
 
-use crate::app::DictationApp;
+use crate::app::{DictationApp, Feed};
 use crate::pill::PillPhase;
 use mundus_gpui_kit::fields::*;
 use mundus_gpui_kit::theme::*;
@@ -23,7 +23,7 @@ fn state_label(state: &str) -> &'static str {
 
 impl Render for DictationApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let state = self.data("dictation.state");
+        let state = self.data(Feed::State.slot());
         let cfg = vget(&state, "config");
         let hotkey = vstr(cfg, "hotkey");
 
@@ -223,8 +223,8 @@ fn titlebar() -> Div {
 }
 
 fn models_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
-    let local = app.data("dictation.local");
-    let models = app.data("dictation.models");
+    let local = app.data(Feed::Local.slot());
+    let models = app.data(Feed::Models.slot());
     if local.is_null() && models.is_null() {
         return div().into_any_element();
     }
