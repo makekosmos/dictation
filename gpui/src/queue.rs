@@ -101,8 +101,9 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
             .flex()
             .items_center()
             .gap_3()
-            .px(px(16.))
-            .py(px(10.))
+            .mx(px(imago_gpui::settings::INSET))
+            .py(px(12.))
+            .min_h(px(60.))
             .child(
                 div()
                     .flex_1()
@@ -132,10 +133,8 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
                 this.queue_open = !this.queue_open;
                 cx.notify();
             }));
-        let mut el = crate::view::plate()
-            .px(px(0.))
-            .py(px(0.))
-            .gap(px(0.))
+        let mut el = imago_gpui::settings::UiStyle::default()
+            .settings_card()
             .child(header);
         if !open {
             return el.into_any_element();
@@ -147,7 +146,11 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
                 .border_color(fade(BORDER(), 0.6)),
         );
         if items.is_empty() {
-            el = el.child(div().px(px(16.)).child(empty("Очередь пуста")));
+            el = el.child(
+                imago_gpui::settings::UiStyle::default()
+                    .card_row(false)
+                    .child(empty("Очередь пуста")),
+            );
         }
         for item in items.iter() {
             let uuid = vstr(item, "uuid");
@@ -161,10 +164,13 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
                 } else {
                     preview
                 };
-                el = el.child(div().px(px(16.)).child(row(
-                    pending_title(&vstr(item, "createdAt")),
-                    format!("{:.0} сек. · {preview}", vnum(item, "durationSec")),
-                )));
+                let title = pending_title(&vstr(item, "createdAt"));
+                let sub = format!("{:.0} сек. · {preview}", vnum(item, "durationSec"));
+                el = el.child(
+                    imago_gpui::settings::UiStyle::default()
+                        .card_row(false)
+                        .child(row(title, sub)),
+                );
                 continue;
             }
             let in_flight = app.pending_inflight.contains(&uuid);
@@ -208,7 +214,9 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
         }
         let any_pending = items.iter().any(|i| vstr(i, "status") != "delivered");
         if !items.is_empty() {
-            let mut bulk = div().flex().gap_2().px(px(16.)).pb(px(8.));
+            let mut bulk = imago_gpui::settings::UiStyle::default()
+                .card_row(false)
+                .gap(px(8.));
             if any_pending {
                 bulk = bulk.child(btn_id("dict-retry-all", "Повторить все", {
                     cx.listener(|this, _, _, cx| {
@@ -230,13 +238,17 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
             el = el.child(bulk);
         }
         if matches!(&app.confirm, Some(Confirm::DiscardAll)) {
-            el = el.child(div().px(px(16.)).child(confirm_row(
-                "Очистить список?",
-                "Все записи будут удалены без восстановления",
-                "Очистить",
-                |this| this.action("dictation.discard_all", json!({})),
-                cx,
-            )));
+            el = el.child(
+                imago_gpui::settings::UiStyle::default()
+                    .card_row(false)
+                    .child(confirm_row(
+                        "Очистить список?",
+                        "Все записи будут удалены без восстановления",
+                        "Очистить",
+                        |this| this.action("dictation.discard_all", json!({})),
+                        cx,
+                    )),
+            );
         }
         el.into_any_element()
     })

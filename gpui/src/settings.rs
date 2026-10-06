@@ -43,13 +43,15 @@ pub(crate) type ModelSelect = Entity<SelectState<SearchableVec<ModelItem>>>;
 /// One on/off setting: a labelled row whose toggle sends the
 /// `dictation.update_config` patch `patch(checked)`.
 fn toggle_row(
+    st: &imago_gpui::settings::UiStyle,
+    first: bool,
     id: &'static str,
     label: &'static str,
     checked: bool,
     patch: impl Fn(bool) -> serde_json::Value + 'static,
     cx: &mut Context<DictationApp>,
 ) -> Div {
-    crate::view::label_row(label).child(
+    card_row(st, first, label).child(
         imago_gpui::toggle::toggle(id, checked, cx, move |this, on, _| {
             this.update_config(patch(on))
         })
@@ -75,11 +77,14 @@ pub(crate) fn config_card(
     }
     let cfg = vget(&state, "config");
 
-    let mut el = crate::view::plate();
+    let st = style();
+    let mut el = st.settings_card();
 
     // --- Editable settings (dictation.update_config — applies live) -------
     el = el
         .child(toggle_row(
+            &st,
+            true,
             "dict-provider-enabled",
             "Диктовка включена",
             vbool(cfg, "providerEnabled"),
@@ -87,6 +92,8 @@ pub(crate) fn config_card(
             cx,
         ))
         .child(toggle_row(
+            &st,
+            false,
             "dict-autopaste",
             "Вставлять текст автоматически",
             vstr(cfg, "injectMode") != "clipboard_only",
@@ -94,6 +101,8 @@ pub(crate) fn config_card(
             cx,
         ))
         .child(toggle_row(
+            &st,
+            false,
             "dict-duck",
             "Приглушать звук при записи",
             vbool(cfg, "duckAudioDuringRecording"),
@@ -149,7 +158,7 @@ fn language_row(
             None => state.set_selected_index(None, window, cx),
         });
     }
-    crate::view::label_row("Язык").child(
+    card_row(&style(), true, "Язык").child(
         div().flex_none().w(px(180.)).child(
             Select::new(&entity)
                 .w_full()
@@ -161,13 +170,17 @@ fn language_row(
     )
 }
 
-/// Hairline between two rows inside one plate — the same divider Manager
-/// draws between model rows (`fade(BORDER(), 0.6)`).
-fn hairline() -> Div {
-    div()
-        .w_full()
-        .border_t_1()
-        .border_color(fade(BORDER(), 0.6))
+/// Shared row geometry for cards whose rows are divided by the Manager
+/// hairline — `settings_card` + `card_row`, never hand-tuned paddings.
+fn style() -> imago_gpui::settings::UiStyle {
+    imago_gpui::settings::UiStyle::default()
+}
+
+/// One row inside `settings_card`: title on the left, control on the right.
+fn card_row(st: &imago_gpui::settings::UiStyle, first: bool, title: &str) -> Div {
+    st.card_row(first)
+        .child(st.row_title(title))
+        .child(div().flex_1().min_w_0())
 }
 
 /// «Хоткей» card: the hotkey picker lives outside «Настройки (Engine)» —
@@ -185,8 +198,9 @@ pub(crate) fn hotkey_card(app: &DictationApp, cx: &mut Context<DictationApp>) ->
             .into_any_element();
     }
     let cfg = vget(&state, "config");
-    crate::view::plate()
-        .child(crate::view::label_row("Хоткей").child(hotkey_picker(app, cfg, cx)))
+    style()
+        .settings_card()
+        .child(card_row(&style(), true, "Хоткей").child(hotkey_picker(app, cfg, cx)))
         .into_any_element()
 }
 
@@ -292,26 +306,19 @@ pub(crate) fn language_model_card(
                 .collect()
         })
         .unwrap_or_default();
-    let row_pad = |row: Div| row.px(px(16.)).py(px(4.));
-    let mut el = crate::view::plate()
-        .px(px(0.))
-        .py(px(0.))
-        .gap(px(0.))
-        .child(row_pad(language_row(app, cfg, window, cx)))
-        .child(hairline());
+    let st = style();
+    let mut el = st.settings_card().child(language_row(app, cfg, window, cx));
 
     if items.is_empty() {
         return el
-            .child(row_pad(
-                div()
-                    .w_full()
-                    .min_h_10()
-                    .flex()
-                    .items_center()
-                    .text_size(px(12.))
-                    .text_color(c(MUTED_FG()))
-                    .child("Скачай модель в Manager → «Модели»"),
-            ))
+            .child(
+                st.card_row(false).child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(c(MUTED_FG()))
+                        .child("Скачай модель в Manager → «Модели»"),
+                ),
+            )
             .into_any_element();
     }
 
@@ -355,8 +362,8 @@ pub(crate) fn language_model_card(
         }
     });
 
-    el = el.child(row_pad(
-        crate::view::label_row("Модель").child(
+    el = el.child(
+        card_row(&st, false, "Модель").child(
             div().flex_none().w(px(180.)).child(
                 Select::new(&entity)
                     .w_full()
@@ -366,8 +373,8 @@ pub(crate) fn language_model_card(
                     .accessibility_label("Модель"),
             ),
         ),
-    ));
-    el = el.child(hairline()).child(row_pad(unload_row(app, cx)));
+    );
+    el = el.child(unload_row(app, cx));
     el.into_any_element()
 }
 
@@ -402,19 +409,5 @@ fn unload_row(app: &DictationApp, cx: &mut Context<DictationApp>) -> Div {
         );
     }
 
-    div()
-        .w_full()
-        .min_h_10()
-        .flex()
-        .items_center()
-        .gap_3()
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .whitespace_nowrap()
-                .text_size(px(13.))
-                .child("Выгрузка модели"),
-        )
-        .child(opts)
+    card_row(&style(), false, "Выгрузка модели").child(opts)
 }
