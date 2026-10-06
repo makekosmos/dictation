@@ -431,3 +431,123 @@ fn adoption_skips_all_recently_ended_captures() {
     assert!(should_adopt_capture(&ended, "cap-foreign"));
     assert!(!should_adopt_capture(&ended, ""));
 }
+
+/// Pops the next queued worker command, panicking when the queue is empty.
+fn next_command(rx: &Receiver<Command>) -> Command {
+    rx.try_recv().expect("expected a queued worker command")
+}
+
+/// `speech.transcribe` replies map onto the pill's delivery outcome: the
+/// explicit `delivery` wins, an `error` state or `injected: false` degrade to
+/// failed / clipboard, and a bare success counts as pasted.
+#[test]
+fn delivery_maps_transcribe_reply() {
+    use crate::pill::PillDelivery::*;
+    let of = |v: Value| DictationApp::pill_delivery_of(&v);
+    assert_eq!(of(json!({ "delivery": "pasted" })), Pasted);
+    assert_eq!(of(json!({ "delivery": "clipboard_only" })), ClipboardOnly);
+    assert_eq!(
+        of(json!({ "delivery": "clipboard_fallback" })),
+        ClipboardFallback
+    );
+    assert_eq!(of(json!({ "delivery": "failed" })), Failed);
+    assert_eq!(of(json!({ "state": "error" })), Failed);
+    assert_eq!(of(json!({ "injected": false })), ClipboardFallback);
+    assert_eq!(of(json!({ "text": "привет" })), Pasted);
+}
+
+/// Push-to-talk is phase-aware: `down` arms a session, an `up` that lands
+/// while `capture.start` is still in flight is remembered and finishes the
+/// session the moment the start reply arrives, and a bare `up` while idle
+/// starts nothing.
+#[gpui::test]
+fn ptt_up_during_starting_finishes_after_start(cx: &mut TestAppContext) {
+    let (app, rx, _replies, _events) = test_app(cx);
+    let ptt = |phase: &str| json!({ "event": "dictation_ptt_trigger", "phase": phase });
+
+    cx.update(|cx| app.update(cx, |this, cx| this.handle_engine_event(ptt("up"), cx)));
+    assert!(rx.try_recv().is_err(), "a bare up must not start capture");
+
+    cx.update(|cx| app.update(cx, |this, cx| this.handle_engine_event(ptt("down"), cx)));
+    assert!(
+        matches!(next_command(&rx), Command::Rpc { .. }),
+        "state read"
+    );
+    assert!(matches!(next_command(&rx), Command::DictationStart { .. }));
+    cx.update(|cx| app.update(cx, |this, cx| this.handle_engine_event(ptt("up"), cx)));
+    assert!(
+        rx.try_recv().is_err(),
+        "up during Starting only records intent"
+    );
+
+    let slot = cx.update(|cx| app.read(cx).pill_slot("start"));
+    cx.update(|cx| {
+        app.update(cx, |this, cx| {
+            this.handle_reply(
+                Reply {
+                    slot,
+                    result: Ok(json!({ "captureId": "cap-1" })),
+                },
+                cx,
+            )
+        })
+    });
+    match next_command(&rx) {
+        Command::DictationStop { capture_id, .. } => assert_eq!(capture_id, "cap-1"),
+        other => panic!("expected DictationStop, got {other:?}"),
+    }
+}
+
+/// A toggle press while recording stops the live capture by its id; a start
+/// reply that lands after the user cancelled stops the orphaned capture
+/// instead of resurrecting the pill.
+#[gpui::test]
+fn toggle_stops_recording_and_cancel_orphans_start(cx: &mut TestAppContext) {
+    let (app, rx, _replies, _events) = test_app(cx);
+    let toggle = json!({ "event": "dictation_toggle_trigger" });
+
+    cx.update(|cx| app.update(cx, |this, cx| this.handle_engine_event(toggle.clone(), cx)));
+    while rx.try_recv().is_ok() {}
+    let slot = cx.update(|cx| app.read(cx).pill_slot("start"));
+    cx.update(|cx| {
+        app.update(cx, |this, cx| {
+            this.handle_reply(
+                Reply {
+                    slot,
+                    result: Ok(json!({ "captureId": "cap-2" })),
+                },
+                cx,
+            )
+        })
+    });
+    cx.update(|cx| app.update(cx, |this, cx| this.handle_engine_event(toggle.clone(), cx)));
+    match next_command(&rx) {
+        Command::DictationStop { capture_id, .. } => assert_eq!(capture_id, "cap-2"),
+        other => panic!("expected DictationStop, got {other:?}"),
+    }
+
+    // Second session: cancel while Starting, then the start reply arrives.
+    cx.update(|cx| app.update(cx, |this, cx| this.dictation_cancel(cx)));
+    while rx.try_recv().is_ok() {}
+    cx.update(|cx| app.update(cx, |this, cx| this.handle_engine_event(toggle.clone(), cx)));
+    while rx.try_recv().is_ok() {}
+    let slot = cx.update(|cx| app.read(cx).pill_slot("start"));
+    cx.update(|cx| app.update(cx, |this, cx| this.dictation_cancel(cx)));
+    while rx.try_recv().is_ok() {}
+    cx.update(|cx| {
+        app.update(cx, |this, cx| {
+            this.handle_reply(
+                Reply {
+                    slot,
+                    result: Ok(json!({ "captureId": "cap-3" })),
+                },
+                cx,
+            )
+        })
+    });
+    match next_command(&rx) {
+        Command::DictationStop { capture_id, .. } => assert_eq!(capture_id, "cap-3"),
+        other => panic!("expected orphan DictationStop, got {other:?}"),
+    }
+    assert!(cx.update(|cx| app.read(cx).phase.is_none()));
+}
