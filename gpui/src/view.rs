@@ -4,6 +4,7 @@
 //! is `pill.rs` — a separate always-on-top window.
 use ::gpui::{prelude::*, *};
 use gpui_component::scroll::ScrollableElement;
+use gpui_component::InteractiveElementExt;
 use serde_json::json;
 
 use crate::app::{DictationApp, Feed};
@@ -22,7 +23,7 @@ fn state_label(state: &str) -> &'static str {
 }
 
 impl Render for DictationApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.data(Feed::State.slot());
         let cfg = vget(&state, "config");
         let hotkey = vstr(cfg, "hotkey");
@@ -183,43 +184,49 @@ impl Render for DictationApp {
             .flex()
             .flex_col()
             .bg(c(BG()))
-            .child(titlebar())
+            .child(titlebar(window))
             .child(col)
     }
 }
 
-/// Native-feel titlebar (Agenda pattern): the strip is a
-/// WindowControlArea::Drag region (HTCAPTION → native move/snap), the
-/// trailing controls are platform hitboxes — Windows handles press,
-/// snap flyout and the close button; close destroys the window while
-/// the worker keeps dictation running.
-fn titlebar() -> Div {
-    div()
-        .h(px(30.))
+/// Shared imago chrome titlebar (Agenda/Manager pattern): a
+/// WindowControlArea::Drag region with the left inset clearing the native
+/// macOS traffic lights (reclaimed in fullscreen). Windows gets the kit's
+/// caption hitboxes; macOS draws its own — do not duplicate min/close.
+/// Close destroys the window while the worker keeps dictation running.
+fn titlebar(window: &Window) -> Div {
+    #[allow(unused_mut)]
+    let mut drag = div()
+        .id("titlebar-drag")
+        .flex_1()
+        .h_full()
+        .window_control_area(WindowControlArea::Drag);
+    #[cfg(target_os = "macos")]
+    {
+        drag = drag.on_double_click(|_, window, _| window.titlebar_double_click());
+    }
+    imago_gpui::chrome::titlebar()
+        .p_0()
         .w_full()
-        .flex_none()
-        .flex()
         .border_b_1()
         .border_color(fade(FG(), 0.10))
         .child(
             div()
-                .id("titlebar-drag")
-                .flex_1()
+                .w(px(
+                    if cfg!(target_os = "macos") && !window.is_fullscreen() {
+                        88.0
+                    } else {
+                        16.0
+                    },
+                ))
                 .h_full()
-                .flex()
-                .items_center()
-                .px_3()
-                .window_control_area(WindowControlArea::Drag)
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(fade(FG(), 0.9))
-                        .child("Mundus Dictation"),
-                ),
+                .flex_none(),
         )
-        .child(caption_btn("–", WindowControlArea::Min, false))
-        .child(caption_btn("×", WindowControlArea::Close, true))
+        .child(drag)
+        .when(cfg!(target_os = "macos"), |bar| bar.pr_3())
+        .when(!cfg!(target_os = "macos"), |bar| {
+            bar.child(imago_gpui::chrome::window_controls())
+        })
 }
 
 fn models_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
@@ -326,29 +333,6 @@ fn models_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyEle
         el = el.child(kv("Скачивание", text));
     }
     el.into_any_element()
-}
-
-/// Native caption button: the platform hit-tests the WindowControlArea, we
-/// only draw the glyph + hover state (Windows convention 46px wide).
-fn caption_btn(label: &'static str, area: WindowControlArea, danger: bool) -> Stateful<Div> {
-    div()
-        .id(SharedString::from(format!("cap-{area:?}")))
-        .w(px(46.))
-        .h_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_size(px(11.))
-        .text_color(fade(FG(), 0.75))
-        .window_control_area(area)
-        .hover(move |el| {
-            if danger {
-                el.bg(fade(0xe81123, 1.0)).text_color(fade(0xffffff, 1.0))
-            } else {
-                el.bg(fade(FG(), 0.10))
-            }
-        })
-        .child(label)
 }
 
 /// Recording length for the "Последняя расшифровка" card — m:ss (h:mm:ss
