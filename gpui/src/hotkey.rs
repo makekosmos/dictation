@@ -52,7 +52,15 @@ impl DictationApp {
 
 /// vk + modifier flags → Electron-style accelerator ("Ctrl+Shift+;").
 /// Ported from `useDictationConfig.shared.ts` (vkToKeyName/buildAccelerator).
+/// macOS Engine emits a ready `accelerator` string instead of `vk` — the
+/// keyCode→name mapping lives in cortex `macos_native.rs`.
 pub(crate) fn build_accelerator(event: &Value) -> Option<String> {
+    if let Some(accel) = event.get("accelerator").and_then(Value::as_str) {
+        let accel = accel.trim();
+        if !accel.is_empty() {
+            return Some(accel.to_string());
+        }
+    }
     let vk = event.get("vk").and_then(Value::as_u64)? as u32;
     let key = vk_to_key_name(vk)?;
     let mut parts = Vec::new();

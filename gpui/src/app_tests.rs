@@ -254,6 +254,19 @@ fn accelerator_names_oem_plus() {
     }
 }
 
+/// macOS Engine emits a prebuilt `accelerator` string (its keyCode→name
+/// table lives in cortex `macos_native.rs`) — the event carries no `vk`.
+#[test]
+fn accelerator_accepts_macos_payload() {
+    let event = json!({ "event": "dictation_capture_key", "accelerator": "Super+Shift+K" });
+    assert_eq!(build_accelerator(&event).as_deref(), Some("Super+Shift+K"));
+    // Empty accelerator still falls back to the vk path.
+    assert_eq!(
+        build_accelerator(&json!({ "accelerator": "", "vk": 0x4B, "ctrl": true })).as_deref(),
+        Some("Ctrl+K")
+    );
+}
+
 /// A captured key with no usable name must not write a modifier-only
 /// accelerator at all.
 #[test]
