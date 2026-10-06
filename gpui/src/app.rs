@@ -14,6 +14,9 @@ use crate::worker::{Command, Worker};
 
 pub use mundus_gpui_kit::fields::Slot;
 
+/// Shown once the worker thread is gone: no reply can ever land again.
+pub(crate) const ENGINE_GONE: &str = "Соединение с Engine завершено. Перезапустите приложение.";
+
 pub struct DictationApp {
     worker: Worker,
     pub slots: HashMap<String, Slot>,
@@ -26,7 +29,6 @@ pub struct DictationApp {
     pub error: Option<String>,
     /// Transient success line; cleared on the next action.
     pub notice: Option<String>,
-    worker_dead: bool,
 
     /// Dictation pill overlay window while a recording session is active.
     pub pill: Option<WindowHandle<DictationPill>>,
@@ -112,7 +114,6 @@ impl DictationApp {
             drain_ticks: 0,
             error: None,
             notice: None,
-            worker_dead: false,
             pill: None,
             status: None,
             phase: None,
@@ -191,23 +192,27 @@ impl DictationApp {
         if slot != "@action" {
             self.ops.insert(slot.clone(), (op, params.clone()));
         }
-        self.slots.insert(slot.clone(), Slot::Loading);
-        if !self.send_command(Command::Rpc {
-            slot: slot.clone(),
-            op,
-            params,
-        }) {
-            // The worker thread is gone — no reply can ever land, so the
-            // slot would paint "Загрузка…" forever next to the dead-
-            // connection banner.
-            self.slots.insert(
-                slot,
-                Slot::Failed("Соединение с Engine завершено. Перезапустите приложение.".into()),
-            );
+        if !self.send_rpc(slot, op, params) {
             // No "@action" reply will ever land to clear these — release
             // the queue rows or their buttons stay disabled forever.
             self.pending_inflight.clear();
         }
+    }
+
+    /// Mark `slot` Loading and queue its RPC. A dead worker can never
+    /// produce a reply, so the slot goes straight to Failed instead of
+    /// painting "Загрузка…" next to the dead-connection banner forever.
+    fn send_rpc(&mut self, slot: String, op: &'static str, params: Value) -> bool {
+        self.slots.insert(slot.clone(), Slot::Loading);
+        let sent = self.send_command(Command::Rpc {
+            slot: slot.clone(),
+            op,
+            params,
+        });
+        if !sent {
+            self.slots.insert(slot, Slot::Failed(ENGINE_GONE.into()));
+        }
+        sent
     }
 
     /// Worker command that doesn't map to a data slot (session control ops
@@ -215,8 +220,7 @@ impl DictationApp {
     /// already dead — the command never left.
     pub(crate) fn send_command(&mut self, command: Command) -> bool {
         if self.worker.commands.send(command).is_err() {
-            self.worker_dead = true;
-            self.error = Some("Соединение с Engine завершено. Перезапустите приложение.".into());
+            self.error = Some(ENGINE_GONE.into());
             return false;
         }
         true
@@ -269,22 +273,7 @@ impl DictationApp {
         if self.drain_ticks.is_multiple_of(66) {
             for (slot, (op, params)) in self.ops.clone() {
                 if matches!(self.slots.get(&slot), Some(Slot::Failed(_)) | None) {
-                    self.slots.insert(slot.clone(), Slot::Loading);
-                    // A dead worker channel can never produce a reply — mark
-                    // the slot Failed again instead of leaving "Загрузка…"
-                    // painted forever (same guard as `call`).
-                    if !self.send_command(Command::Rpc {
-                        slot: slot.clone(),
-                        op,
-                        params,
-                    }) {
-                        self.slots.insert(
-                            slot,
-                            Slot::Failed(
-                                "Соединение с Engine завершено. Перезапустите приложение.".into(),
-                            ),
-                        );
-                    }
+                    self.send_rpc(slot, op, params);
                 }
             }
         }
@@ -294,9 +283,7 @@ impl DictationApp {
                 Ok(reply) => reply,
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
-                    self.worker_dead = true;
-                    self.error =
-                        Some("Соединение с Engine завершено. Перезапустите приложение.".into());
+                    self.error = Some(ENGINE_GONE.into());
                     cx.notify();
                     break;
                 }
@@ -396,26 +383,14 @@ impl DictationApp {
                         // Zero-length capture (e.g. a PTT tap released before
                         // audio buffered): worker.ts parity — finish silently
                         // instead of surfacing a bogus Не доставлено.
-                        Some("") => {
-                            self.phase = None;
-                            self.delivery = None;
-                            self.capture_adopted = false;
-                            self.close_pill(cx);
-                            cx.notify();
-                        }
+                        Some("") => self.end_pill_session(cx),
                         Some(audio_b64) => {
-                            let sent = self.send_command(Command::DictationTranscribe {
+                            let transcribe = Command::DictationTranscribe {
                                 slot: self.pill_slot("result"),
                                 audio_b64: audio_b64.to_string(),
                                 duration_sec: self.last_duration_ms / 1000.0,
-                            });
-                            if !sent {
-                                self.fail_pill(
-                                    "Соединение с Engine завершено. Перезапустите приложение."
-                                        .into(),
-                                    cx,
-                                );
-                            }
+                            };
+                            self.send_pill_command(transcribe, cx);
                         }
                         // capture.stop answered without audioB64 at all —
                         // malformed reply (worker.ts "audio-missing" parity).
@@ -427,10 +402,7 @@ impl DictationApp {
             "dictation.pill.result" => match reply.result {
                 Ok(mut v) => {
                     if v.get("cancelled").and_then(Value::as_bool) == Some(true) {
-                        self.phase = None;
-                        self.delivery = None;
-                        self.capture_adopted = false;
-                        self.close_pill(cx);
+                        self.end_pill_session(cx);
                     } else {
                         self.delivery = Some(Self::pill_delivery_of(&v));
                         self.schedule_pill_close(cx);

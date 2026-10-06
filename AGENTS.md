@@ -32,8 +32,8 @@ rtk python scripts/test_release.py
 - Git hooks: `hk.pkl` (hk, same tool as agenda-gpui) — `hk install`; pre-commit
   runs fmt + check, pre-push/`hk check` runs clippy, tests and the release-rule
   checks.
-- The clippy warning baseline (`-A` list) must stay identical to `build.yml`'s
-  Windows clippy step and agenda-gpui.
+- Clippy runs with plain `-D warnings` (no `-A` allow-list): fix the code, do
+  not add suppressions to hk.pkl or `build.yml`.
 - Version source of truth: `gpui/Cargo.toml`. Release tags are `gpui-vX.Y.Z`;
   the legacy kspkg `vX.Y.Z` line belongs to already-published releases and is
   never reused or modified.

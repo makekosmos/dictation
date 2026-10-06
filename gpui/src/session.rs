@@ -5,7 +5,7 @@
 use ::gpui::prelude::*;
 use serde_json::{json, Value};
 
-use crate::app::{DictationApp, Slot};
+use crate::app::{DictationApp, Slot, ENGINE_GONE};
 use crate::pill::{PillDelivery, PillPhase};
 use crate::worker::Command;
 
@@ -21,10 +21,8 @@ impl DictationApp {
             Some(PillPhase::Recording) => self.dictation_finish(cx),
             Some(PillPhase::Starting) => {}
             Some(PillPhase::Processing) => {
-                self.phase = None;
-                self.delivery = None;
                 self.levels.clear();
-                self.close_pill(cx);
+                self.end_pill_session(cx);
                 self.dictation_begin(cx);
             }
         }
@@ -33,9 +31,6 @@ impl DictationApp {
     /// Cancel the session from any phase: close the pill, terminate the
     /// capture session and reset the backend state machine.
     pub fn dictation_cancel(&mut self, cx: &mut Context<Self>) {
-        self.close_pill(cx);
-        self.phase = None;
-        self.delivery = None;
         self.levels.clear();
         self.finish_after_start = false;
         self.session += 1;
@@ -43,7 +38,7 @@ impl DictationApp {
         if let Some(id) = &capture_id {
             self.tombstone_capture(id.clone());
         }
-        self.capture_adopted = false;
+        self.end_pill_session(cx);
         self.send_command(Command::DictationCancel {
             slot: "dictation.pill.cancel".into(),
             capture_id,
@@ -70,17 +65,20 @@ impl DictationApp {
         }
         self.phase = Some(PillPhase::Starting);
         self.push_pill(cx);
-        if !self.send_command(Command::DictationStart {
+        let start = Command::DictationStart {
             slot: self.pill_slot("start"),
-        }) {
-            // Dead worker channel — without this the pill sits on "Запуск
-            // записи…" forever: no reply can ever arrive to move it on.
-            self.fail_pill(
-                "Соединение с Engine завершено. Перезапустите приложение.".into(),
-                cx,
-            );
-        }
+        };
+        self.send_pill_command(start, cx);
         cx.notify();
+    }
+
+    /// Send a session command; a dead worker channel can never answer, so the
+    /// pill would sit on "Запуск записи…"/"Распознаю" forever — fail it like a
+    /// refused Engine op (delivery Failed + timed close) instead.
+    pub(crate) fn send_pill_command(&mut self, command: Command, cx: &mut Context<Self>) {
+        if !self.send_command(command) {
+            self.fail_pill(ENGINE_GONE.into(), cx);
+        }
     }
 
     /// Replies carry the issuing session in the slot (`name@N`) — a session
@@ -99,31 +97,30 @@ impl DictationApp {
         match self.capture.take() {
             Some(capture_id) => {
                 self.tombstone_capture(capture_id.clone());
-                // A dead worker channel must not freeze the pill on
-                // "Распознаю" forever — surface the failure like a refused
-                // Engine op (delivery Failed + timed close).
-                if !self.send_command(Command::DictationStop {
+                let stop = Command::DictationStop {
                     slot: self.pill_slot("stop"),
                     capture_id,
-                }) {
-                    self.fail_pill(
-                        "Соединение с Engine завершено. Перезапустите приложение.".into(),
-                        cx,
-                    );
-                }
+                };
+                self.send_pill_command(stop, cx);
             }
             None => {
-                if !self.send_command(Command::DictationCancel {
+                let cancel = Command::DictationCancel {
                     slot: "dictation.pill.cancel".into(),
                     capture_id: None,
-                }) {
-                    self.fail_pill(
-                        "Соединение с Engine завершено. Перезапустите приложение.".into(),
-                        cx,
-                    );
-                }
+                };
+                self.send_pill_command(cancel, cx);
             }
         }
+        cx.notify();
+    }
+
+    /// Back to idle: drop the phase and delivery outcome and close the
+    /// overlay. Callers retire the capture (`capture.take` + tombstone) first.
+    pub(crate) fn end_pill_session(&mut self, cx: &mut Context<Self>) {
+        self.phase = None;
+        self.delivery = None;
+        self.capture_adopted = false;
+        self.close_pill(cx);
         cx.notify();
     }
 
@@ -192,10 +189,7 @@ impl DictationApp {
             cx.background_executor().timer(delay).await;
             let _ = this.update(cx, |this, cx| {
                 if this.session == session && this.phase == Some(PillPhase::Processing) {
-                    this.phase = None;
-                    this.delivery = None;
-                    this.close_pill(cx);
-                    cx.notify();
+                    this.end_pill_session(cx);
                 }
             });
         })
@@ -336,13 +330,10 @@ impl DictationApp {
                     && self.phase == Some(PillPhase::Recording)
                     && self.capture_adopted
                 {
-                    self.phase = None;
                     if let Some(id) = self.capture.take() {
                         self.tombstone_capture(id);
                     }
-                    self.capture_adopted = false;
-                    self.delivery = None;
-                    self.close_pill(cx);
+                    self.end_pill_session(cx);
                 }
                 self.call("dictation.state", "dictation.get_state", json!({}));
             }

@@ -127,7 +127,7 @@ impl Render for DictationApp {
                             .split('+')
                             .map(str::trim)
                             .filter(|p| !p.is_empty())
-                            .map(|p| crate::pill_wave::kbd(p.to_string())),
+                            .map(|p| crate::pill::kbd(p.to_string())),
                     ),
             );
         }
