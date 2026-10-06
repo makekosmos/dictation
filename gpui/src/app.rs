@@ -14,6 +14,39 @@ use crate::worker::{Command, Worker};
 
 pub use mundus_gpui_kit::fields::Slot;
 
+/// Engine read ops the status window mirrors in a slot each. One table for
+/// slot name and op, so a refresh can't pair the wrong two strings.
+#[derive(Clone, Copy)]
+pub enum Feed {
+    State,
+    Local,
+    Models,
+    Pending,
+    Stats,
+}
+
+impl Feed {
+    pub const fn slot(self) -> &'static str {
+        match self {
+            Feed::State => "dictation.state",
+            Feed::Local => "dictation.local",
+            Feed::Models => "dictation.models",
+            Feed::Pending => "dictation.pending",
+            Feed::Stats => "dictation.stats",
+        }
+    }
+
+    const fn op(self) -> &'static str {
+        match self {
+            Feed::State => "dictation.get_state",
+            Feed::Local => "dictation.local_status",
+            Feed::Models => "dictation.list_local_models",
+            Feed::Pending => "dictation.list_pending",
+            Feed::Stats => "dictation.get_stats",
+        }
+    }
+}
+
 /// Shown once the worker thread is gone: no reply can ever land again.
 pub(crate) const ENGINE_GONE: &str = "Соединение с Engine завершено. Перезапустите приложение.";
 
@@ -146,12 +179,21 @@ impl DictationApp {
 
     /// Initial data loads for the status window.
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.call("dictation.state", "dictation.get_state", json!({}));
-        self.call("dictation.local", "dictation.local_status", json!({}));
-        self.call("dictation.models", "dictation.list_local_models", json!({}));
-        self.call("dictation.pending", "dictation.list_pending", json!({}));
-        self.call("dictation.stats", "dictation.get_stats", json!({}));
+        for feed in [
+            Feed::State,
+            Feed::Local,
+            Feed::Models,
+            Feed::Pending,
+            Feed::Stats,
+        ] {
+            self.load(feed);
+        }
         cx.notify();
+    }
+
+    /// (Re)load one mirrored Engine read into its slot.
+    pub fn load(&mut self, feed: Feed) {
+        self.call(feed.slot(), feed.op(), json!({}));
     }
 
     /// Mutation op: on success refreshes state/models (same refresh-after-write
@@ -417,9 +459,9 @@ impl DictationApp {
                         self.error = None;
                     }
                     // Post-session refresh (same refresh-after-write as Vue).
-                    self.call("dictation.state", "dictation.get_state", json!({}));
-                    self.call("dictation.stats", "dictation.get_stats", json!({}));
-                    self.call("dictation.pending", "dictation.list_pending", json!({}));
+                    for feed in [Feed::State, Feed::Stats, Feed::Pending] {
+                        self.load(feed);
+                    }
                 }
                 Err(e) => self.fail_pill(e, cx),
             },
@@ -456,7 +498,7 @@ impl DictationApp {
                 }
             },
             slot => {
-                if slot == "dictation.pending" {
+                if slot == Feed::Pending.slot() {
                     // Fresh queue snapshot — every in-flight op was answered.
                     self.pending_inflight.clear();
                 }

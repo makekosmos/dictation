@@ -5,7 +5,7 @@
 use ::gpui::prelude::*;
 use serde_json::{json, Value};
 
-use crate::app::{DictationApp, Slot, ENGINE_GONE};
+use crate::app::{DictationApp, Feed, Slot, ENGINE_GONE};
 use crate::pill::{PillDelivery, PillPhase};
 use crate::worker::Command;
 
@@ -60,8 +60,8 @@ impl DictationApp {
         if self.pill.is_none() {
             self.pill = crate::pill::open(cx.entity(), self.dictation_hotkey(), cx);
         }
-        if !matches!(self.slots.get("dictation.state"), Some(Slot::Ready(_))) {
-            self.call("dictation.state", "dictation.get_state", json!({}));
+        if !matches!(self.slots.get(Feed::State.slot()), Some(Slot::Ready(_))) {
+            self.load(Feed::State);
         }
         self.phase = Some(PillPhase::Starting);
         self.push_pill(cx);
@@ -134,7 +134,7 @@ impl DictationApp {
 
     /// The pill footer renders the configured hotkey next to Отправить.
     fn dictation_hotkey(&self) -> String {
-        self.data("dictation.state")
+        self.data(Feed::State.slot())
             .get("config")
             .map(|c| mundus_gpui_kit::fields::vstr(c, "hotkey"))
             .filter(|h| !h.is_empty())
@@ -335,16 +335,16 @@ impl DictationApp {
                     }
                     self.end_pill_session(cx);
                 }
-                self.call("dictation.state", "dictation.get_state", json!({}));
+                self.load(Feed::State);
             }
             "dictation_config_changed" => {
-                self.call("dictation.state", "dictation.get_state", json!({}));
+                self.load(Feed::State);
             }
             "dictation_stats_changed" => {
-                self.call("dictation.stats", "dictation.get_stats", json!({}));
+                self.load(Feed::Stats);
             }
             "dictation_pending_changed" => {
-                self.call("dictation.pending", "dictation.list_pending", json!({}));
+                self.load(Feed::Pending);
             }
             // Progress ticks stream per chunk — stash the payload for the
             // view rather than re-issuing RPCs; started resets the slot and
@@ -356,8 +356,8 @@ impl DictationApp {
             }
             "dictation_local_model_download_complete" | "dictation_local_model_download_failed" => {
                 self.slots.remove("dictation.download");
-                self.call("dictation.local", "dictation.local_status", json!({}));
-                self.call("dictation.models", "dictation.list_local_models", json!({}));
+                self.load(Feed::Local);
+                self.load(Feed::Models);
             }
             _ => {}
         }
