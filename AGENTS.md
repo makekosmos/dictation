@@ -1,78 +1,82 @@
-# Dictation: agent instructions
+# AGENTS.md — dictation
 
-## Scope and entry points
+Нативное GPUI-приложение диктовки для Mundus Engine: окно статуса, плашка-pill,
+захват хоткея, настройки. Единственный крейт — `gpui/` (`dictation-gpui`);
+корневого Cargo workspace нет, все `cargo`-команды идут с
+`--manifest-path gpui/Cargo.toml`. Главная платформа — Windows; Linux и macOS
+собираются и проверяются в CI. Приложение ставится Engine из GitHub Releases
+этого репо.
 
-Standalone GPUI dictation app for Mundus Engine. The legacy Vue `.kspkg`
-package was retired (removed in this change); only the Rust crate ships.
+## Карта
 
-- `gpui/`: the `dictation-gpui` crate — status window, pill overlay, hotkey
-  capture, settings UI. `gpui/src/worker.rs` holds the blocking Engine calls
-  on a worker thread; `gpui/src/app.rs` owns the state machine.
-- `scripts/release.py`, `scripts/publish-version.sh`,
-  `scripts/test_release.py`: `gpui-vX.Y.Z` versioning, packaging and
-  publication used by `.github/workflows/build.yml`.
-- `artifacts/`: historical reproduction notes; reference only, not a gate.
+- `gpui/src/main.rs` — запуск; `app.rs` — состояние приложения;
+  `session.rs` — автомат сессии записи (PTT, переключатель, осиротевший старт,
+  доставка результата); `worker.rs` — блокирующие вызовы Engine в отдельном
+  потоке; `hotkey.rs` — хоткей; `pill.rs`, `pill_wave.rs`, `status_window.rs`,
+  `settings.rs`, `queue.rs`, `view.rs` — UI.
+- `gpui/windows/`, `gpui/build.rs` — иконка и VERSIONINFO.
+- `scripts/release.py`, `publish-version.sh`, `test_release.py` — версии,
+  упаковка и публикация релизов.
 
-Read README, relevant `gpui/src` code and any nested AGENTS.md first.
-Check current git status and task/PR revision; preserve unrelated changes.
-Use current implementation as evidence, not old issue descriptions.
+## Границы
 
-## Setup and verification
+- Приложение говорит с Engine только через клиент RPC/WS из
+  `mundus-gpui-kit`: операции `dictation.*` (запись, транскрипция, отмена,
+  конфиг, состояние, локальные модели, очередь). Микрофон, глобальный хоткей,
+  провайдеры распознавания, ключи API и вставка текста принадлежат Engine
+  (`cortex/runtime/crates/engine-dictation/`). Нужна новая возможность — это
+  новая операция Engine в cortex, а не обход в приложении.
+- Ключи API хранятся в cortex; приложение не читает и не стирает их напрямую.
+- `DICTATION_GPUI_OFFSCREEN` убирает окно с экрана для headless-запуска.
 
-Run from this repository root. Prefix shell commands with `rtk`; use `rtk proxy`
-when unfiltered output is needed. Do not bypass hooks to obtain a green result.
+## Запуск
 
-```powershell
-rtk cargo fmt --manifest-path gpui/Cargo.toml -- --check
-rtk cargo clippy --locked --manifest-path gpui/Cargo.toml --all-targets --all-features -- -D warnings
-rtk cargo test --locked --manifest-path gpui/Cargo.toml --all-features
-rtk python scripts/test_release.py
+```text
+cargo run --manifest-path gpui/Cargo.toml
 ```
 
-- Git hooks: `hk.pkl` (hk, same tool as agenda-gpui) — `hk install`; pre-commit
-  runs fmt + check, pre-push/`hk check` runs clippy, tests and the release-rule
-  checks.
-- Clippy runs with plain `-D warnings` (no `-A` allow-list): fix the code, do
-  not add suppressions to hk.pkl or `build.yml`.
-- Version source of truth: `gpui/Cargo.toml`. Release tags are `gpui-vX.Y.Z`;
-  the legacy kspkg `vX.Y.Z` line belongs to already-published releases and is
-  never reused or modified.
+Engine берётся из `makekosmos/cortex`: `pnpm run dev -- --engine-only` в корне
+cortex. Системные пакеты для Linux перечислены в шаге `Linux dependencies`
+файла `.github/workflows/build.yml`.
 
-## Contracts to preserve
+## Проверки
 
-- The app reaches the Engine only through `mundus-gpui-kit`'s `Engine` RPC/WS
-  client (`dictation.capture.*`, `dictation.speech.transcribe`,
-  `dictation.cancel`, `dictation.*` config/state ops). Microphone, hotkeys,
-  overlay injection, credentials, transcription providers and text insertion
-  stay in cortex `runtime/src/dictation/`; do not implement app-side bypasses.
-- cortex's Windows installer build pins this repo
-  (`desktop/component-pins.json`, `dictation_gpui`) and builds the crate from a
-  sibling checkout; coordinate layout changes with the cortex owner.
-- Preserve existing UI language (Russian strings); reuse Imago/mundus-gpui-kit
-  tokens/components and preserve keyboard navigation, focus behavior and
-  accessible names.
-- Clean up listeners, timers and subscriptions on disposal. Verify visual
-  changes in the running UI, or report UI verification NOT_RUN with its reason.
+CI (`.github/workflows/build.yml`) запускается на каждый PR и на push в `main`:
+fmt, clippy с `-D warnings`, тесты и release-сборка на Windows, Linux и
+macOS; плюс `python scripts/test_release.py`. Ночью (00:00 МСК) тот же
+workflow выпускает релиз.
 
-## Parallel work
+Локально те же проверки гонит `hk` (`hk.pkl`):
 
-- This chat owns only its assigned repositories; sibling repositories are read-only unless explicitly assigned.
-- Each writer uses a separate worktree. Never switch branches, reset, clean or stash another writer's checkout.
-- The lead may use a few Luna subagents for bounded independent work. Give each an acceptance condition, file boundary and dependency revision.
-- Assign manifests, lockfiles, shared helpers and generated outputs to one writer. Integrate returned commits sequentially.
-- Pin external dependencies by version/SHA; if existing tooling needs sibling paths, provision isolated pinned checkouts instead of changing another chat's code.
-- Hand off contract changes with operation/type, inputs, outputs, errors, version and compatibility evidence. Finish independent work while a dependency is pending.
+```text
+cargo install hk --locked && hk install     # один раз на копию
+hk run pre-push                             # или hk check --all
+cargo fmt --manifest-path gpui/Cargo.toml -- --check
+cargo clippy --locked --manifest-path gpui/Cargo.toml --all-targets --all-features -- -D warnings
+cargo test --locked --manifest-path gpui/Cargo.toml --all-features
+python scripts/test_release.py
+```
 
-## Completion
+Не обходи хуки через `--no-verify`.
 
-- Prefer existing code and tools; avoid unrelated cleanup and new abstractions. Trace callers before fixing a shared bug.
-- Add the smallest meaningful regression check for changed nontrivial behavior; include failure paths for permissions, migrations or persistence.
-- For code or dependency changes, run relevant checks during work and the full gate on the integrated revision. Documentation-only edits need path/command and diff checks, not an application rebuild.
-- For nontrivial work, use an independent Luna review of the integrated revision.
-- Report exact SHA (and dirty diff if applicable), dependency revisions, commands and PASS / FAIL / NOT_RUN with reasons. Never claim a missing native or external check passed.
-- Follow the current organization quality contract; CI absence is not evidence of failure or success, and local checks do not bypass protected-branch rules.
-- Do not publish releases, upload artifacts, alter access or close umbrella issues unless that action is authorized. Never replace bytes of an already published version.
+## Правила кода
 
-## Worktree bootstrap
+- Мёртвый код удаляй сразу, вместе с тестами только на него. Clippy идёт с
+  чистым `-D warnings`: не добавляй `-A …` в `hk.pkl` и `build.yml` и
+  `#[allow(...)]` в код, чини код.
+- `gpui` (псевдоним `gpui-kit`) и `gpui-component` закреплены точными версиями
+  и должны совпадать с cortex/manager-gpui, agenda-gpui и memoria-gpui: две
+  версии gpui в одной сборке — ошибка типов. Поднимай вместе.
+  `imago-gpui` и `mundus-gpui-kit` закреплены по rev; их ревизии сейчас
+  отличаются от остальных приложений — выровняй при очередном обновлении.
+- Строки интерфейса — русские. Используй токены и компоненты
+  imago/`mundus-gpui-kit`, сохраняй клавиатурную навигацию, фокус и доступные
+  имена.
+- Подписки, таймеры и слушатели снимай при уничтожении окна или view.
 
-- Before delegating, ensure this AGENTS.md exists in the new worktree. Git does not carry uncommitted instructions into worktrees: copy only the approved instruction file if absent; do not copy unrelated working changes.
+## Релиз
+
+Теги вида `gpui-vX.Y.Z`; источник версии — `gpui/Cargo.toml`. Релиз выпускает
+workflow по расписанию: версию вручную не меняй, тег не ставь и релиз не
+публикуй без просьбы. Уже опубликованные версии не перезаписываются; старая
+линия `vX.Y.Z` (Vue `.kspkg`) закрыта и не используется.
