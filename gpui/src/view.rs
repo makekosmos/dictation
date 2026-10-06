@@ -109,7 +109,10 @@ impl Render for DictationApp {
         col = col.child(crate::settings::hotkey_card(self, cx));
 
         // --- Модель ---
-        col = col.child(crate::settings::models_card(self, cx));
+        col = col.child(crate::settings::models_card(self, window, cx));
+
+        // --- Выгрузка модели ---
+        col = col.child(crate::settings::unload_card(self, cx));
 
         // --- Настройки (Engine config mirror + update_config controls) ---
         col = col.child(crate::settings::config_card(self, window, cx));

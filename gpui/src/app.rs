@@ -114,6 +114,7 @@ pub struct DictationApp {
     /// is re-synced to `config.language` each repaint so external config
     /// changes show up.
     pub(crate) lang_select: Option<crate::languages::LangSelect>,
+    pub(crate) model_select: Option<crate::settings::ModelSelect>,
 }
 
 /// Destructive Engine op the status window asks to confirm inline — cheaper
@@ -162,6 +163,7 @@ impl DictationApp {
             confirm: None,
             pending_inflight: std::collections::HashSet::new(),
             lang_select: None,
+            model_select: None,
         };
         this.refresh(cx);
         cx.spawn(async move |this, cx| loop {

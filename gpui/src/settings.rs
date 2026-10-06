@@ -2,7 +2,7 @@
 //! editable settings (`dictation.update_config` — hotkey, idle-unload,
 //! providerEnabled, injectMode, duckAudioDuringRecording, language).
 use ::gpui::{prelude::*, *};
-use gpui_component::searchable_list::SearchableVec;
+use gpui_component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_component::select::{Select, SelectEvent, SelectState};
 use gpui_component::Sizable;
 use serde_json::json;
@@ -11,6 +11,34 @@ use crate::app::{DictationApp, Feed};
 use crate::languages::{language_code, language_items, LangItem};
 use mundus_gpui_kit::fields::*;
 use mundus_gpui_kit::theme::*;
+
+/// One row of the model `Select`: `id` goes to `dictation.use_local_model`,
+/// `label` is the display name. Search hits both (mirrors `LangItem`).
+#[derive(Debug, Clone)]
+pub(crate) struct ModelItem {
+    id: String,
+    label: String,
+}
+
+impl SearchableListItem for ModelItem {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        SharedString::from(self.label.clone())
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.id
+    }
+
+    fn matches(&self, query: &str) -> bool {
+        let query = query.to_lowercase();
+        self.label.to_lowercase().contains(&query) || self.id.contains(&query)
+    }
+}
+
+/// The lazily-created select entity stored on `DictationApp`.
+pub(crate) type ModelSelect = Entity<SelectState<SearchableVec<ModelItem>>>;
 
 fn trigger_label(mode: &str) -> &'static str {
     match mode {
@@ -135,38 +163,6 @@ pub(crate) fn config_card(
     // --- Read-only mirror + idle-unload (already wired) -------------------
     el = el.child(kv("Режим", trigger_label(&vstr(cfg, "triggerMode"))));
     el = el.child(kv("Провайдер", vstr(cfg, "provider")));
-    el = el.child(kv("Модель", vstr(cfg, "model")));
-    // Idle unload: number → minutes, null/0 → "Не выгружать".
-    let unload_ms = vnum(cfg, "localIdleUnloadMs");
-    let current_min = if unload_ms <= 0.0 {
-        None
-    } else {
-        Some((unload_ms / 60_000.0).round() as u64)
-    };
-    let mut unload_row = div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .child(kv("Выгрузка модели", "после простоя"));
-    let mut opts = div().flex().items_center().gap_1();
-    for (label, mins) in [
-        ("5 мин", Some(5u64)),
-        ("10 мин", Some(10)),
-        ("30 мин", Some(30)),
-        ("∞", None),
-    ] {
-        let selected = mins == current_min;
-        opts = opts.child(
-            seg_opt(&format!("unload-{label}"), label, selected).on_click(cx.listener(
-                move |this, _, _, cx| {
-                    this.set_idle_unload_min(mins);
-                    cx.notify();
-                },
-            )),
-        );
-    }
-    unload_row = unload_row.child(opts);
-    el = el.child(unload_row);
 
     if let Some(err) = vopt(&state, "lastError") {
         el = el.child(kv("Последняя ошибка", err));
@@ -262,19 +258,35 @@ pub(crate) fn seg_opt(id: &str, label: &'static str, selected: bool) -> Stateful
     }
 }
 
-/// «Модель» card — выбор локальной модели. Кликабельны только строки,
-/// которые Engine реально может запустить (скачаны + поддерживают
-/// транскриб + для whisper-семейства стоит whisper.cpp sidecar):
-/// `use_local_model` всё равно отклонил бы остальные, показываем причину
-/// muted-текстом вместо бесполезного клика.
-pub(crate) fn models_card(app: &DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
+/// «Модель» card — выбор локальной модели тем же searchable `Select`, что
+/// и «Язык распознавания». В списке только модели, которые Engine реально
+/// может запустить: скачанные, поддерживающие транскриб и для
+/// whisper-семейства — при наличии whisper.cpp sidecar'а.
+pub(crate) fn models_card(
+    app: &mut DictationApp,
+    window: &mut Window,
+    cx: &mut Context<DictationApp>,
+) -> AnyElement {
     let data = app.data(Feed::Models.slot());
     let command_installed = vbool(&data, "commandInstalled");
-    let models = vget(&data, "models")
+    let items: Vec<ModelItem> = vget(&data, "models")
         .as_array()
-        .cloned()
+        .map(|models| {
+            models
+                .iter()
+                .filter(|m| {
+                    let id = vstr(m, "id");
+                    vbool(m, "downloaded")
+                        && vbool(m, "transcriptionSupported")
+                        && (id.starts_with("parakeet") || command_installed)
+                })
+                .map(|m| ModelItem {
+                    id: vstr(m, "id").to_string(),
+                    label: vstr(m, "name").to_string(),
+                })
+                .collect()
+        })
         .unwrap_or_default();
-
     let mut el = card().child(
         div()
             .text_size(px(12.))
@@ -282,69 +294,125 @@ pub(crate) fn models_card(app: &DictationApp, cx: &mut Context<DictationApp>) ->
             .child("Модель"),
     );
 
-    let mut any_usable = false;
-    for model in models {
-        let id = vstr(&model, "id").to_string();
-        let name = vstr(&model, "name").to_string();
-        let downloaded = vbool(&model, "downloaded");
-        let selected = vbool(&model, "selected");
-        let supported = vbool(&model, "transcriptionSupported");
-        let usable = downloaded && supported && (id.starts_with("parakeet") || command_installed);
-        any_usable |= usable;
-
-        let status: SharedString = if selected {
-            "Выбрана".into()
-        } else if !downloaded {
-            "Не скачана".into()
-        } else if !supported {
-            "Не для распознавания".into()
-        } else if !id.starts_with("parakeet") && !command_installed {
-            "Нужен whisper.cpp".into()
-        } else {
-            "Скачана".into()
-        };
-
-        let mut row = div()
-            .id(SharedString::from(format!("model-{id}")))
-            .w_full()
-            .min_h_10()
-            .flex()
-            .items_center()
-            .gap_3()
+    if items.is_empty() {
+        return el
             .child(
                 div()
-                    .flex_1()
-                    .min_w_0()
-                    .whitespace_nowrap()
-                    .text_size(px(13.))
-                    .child(name),
-            )
-            .child(
-                div()
-                    .flex_none()
                     .text_size(px(12.))
-                    .when_else(
-                        selected,
-                        |el| el.text_color(c(ACCENT())),
-                        |el| el.text_color(c(MUTED_FG())),
-                    )
-                    .child(status),
-            );
-        if usable && !selected {
-            let id2 = id.clone();
-            row = row
-                .cursor_pointer()
-                .on_click(cx.listener(move |this, _, _, _| this.use_local_model(&id2)));
-        }
-        el = el.child(row);
+                    .text_color(c(MUTED_FG()))
+                    .child("Скачай модель в Manager → «Модели»"),
+            )
+            .into_any_element();
     }
-    if !any_usable {
-        el = el.child(
+
+    // Current selection from the feed (`selected` flag Engine recomputes).
+    let current: Option<String> = vget(&data, "models").as_array().and_then(|models| {
+        models
+            .iter()
+            .find(|m| vbool(m, "selected"))
+            .map(|m| vstr(m, "id").to_string())
+    });
+
+    if app.model_select.is_none() {
+        let entity = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(Vec::<ModelItem>::new()),
+                None,
+                window,
+                cx,
+            )
+            .searchable(true)
+        });
+        cx.subscribe(
+            &entity,
+            |this, _entity, event: &SelectEvent<SearchableVec<ModelItem>>, _cx| {
+                if let SelectEvent::Confirm(Some(id)) = event {
+                    this.use_local_model(id);
+                }
+            },
+        )
+        .detach();
+        app.model_select = Some(entity);
+    }
+    let entity = app.model_select.clone().unwrap();
+    entity.update(cx, |state, cx| {
+        state.set_items(SearchableVec::new(items), window, cx);
+        if state.selected_value() != current.as_ref() {
+            match &current {
+                Some(id) => state.set_selected_value(id, window, cx),
+                None => state.set_selected_index(None, window, cx),
+            }
+        }
+    });
+
+    el = el.child(
+        crate::view::label_row("Локальная модель").child(
+            div().flex_none().w(px(180.)).child(
+                Select::new(&entity)
+                    .w_full()
+                    .small()
+                    .placeholder("Выберите модель")
+                    .search_placeholder("Поиск…")
+                    .accessibility_label("Локальная модель"),
+            ),
+        ),
+    );
+    el.into_any_element()
+}
+
+/// «Выгрузка модели» card — локальная модель выгружается из памяти после
+/// простоя; `localIdleUnloadMs` в минутах, `None` = никогда.
+pub(crate) fn unload_card(app: &DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
+    let state = app.data(Feed::State.slot());
+    let cfg = vget(&state, "config");
+    let unload_ms = vnum(cfg, "localIdleUnloadMs");
+    let current_min = if unload_ms <= 0.0 {
+        None
+    } else {
+        Some((unload_ms / 60_000.0).round() as u64)
+    };
+
+    let mut opts = div().flex().items_center().gap_1();
+    for (label, mins) in [
+        ("5 мин", Some(5u64)),
+        ("10 мин", Some(10)),
+        ("30 мин", Some(30)),
+        ("∞", None),
+    ] {
+        let selected = mins == current_min;
+        opts = opts.child(
+            seg_opt(&format!("unload-{label}"), label, selected).on_click(cx.listener(
+                move |this, _, _, cx| {
+                    this.set_idle_unload_min(mins);
+                    cx.notify();
+                },
+            )),
+        );
+    }
+
+    card()
+        .child(
             div()
                 .text_size(px(12.))
                 .text_color(c(MUTED_FG()))
-                .child("Скачай модель в Manager → «Модели»"),
-        );
-    }
-    el.into_any_element()
+                .child("Выгрузка модели"),
+        )
+        .child(
+            div()
+                .w_full()
+                .min_h_10()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .whitespace_nowrap()
+                        .text_size(px(13.))
+                        .child("После простоя"),
+                )
+                .child(opts),
+        )
+        .into_any_element()
 }
