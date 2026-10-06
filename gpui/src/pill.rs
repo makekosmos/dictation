@@ -8,10 +8,7 @@
 use ::gpui::{prelude::*, *};
 
 use crate::app::DictationApp;
-use crate::pill_wave::{
-    hint_button, kbd, paint_wave, Wave, DELIVERY_PASTED, WAVE_ERROR, WAVE_RECORDING, WAVE_WAITING,
-};
-pub use crate::pill_wave::{open, PillDelivery, PillPhase};
+use crate::pill_wave::{paint_wave, Wave};
 use mundus_gpui_kit::theme::*;
 
 /// Vue pill body is 380x126 (`dictation-pill.ts` PILL_WIDTH/PILL_HEIGHT).
@@ -20,6 +17,35 @@ pub(crate) const PILL_H: f32 = 126.;
 /// Bottom-center of the work area, like the Electron pill.
 pub(crate) const BOTTOM_MARGIN: f32 = 100.;
 const FOOTER_H: f32 = 34.;
+
+// Fixed Vue palette (dictation-pill-waveform.ts / DictationPillView.vue CSS).
+pub const WAVE_RECORDING: u32 = 0x71717a; // zinc-500
+pub const WAVE_WAITING: u32 = 0xf5a524; // amber
+pub const WAVE_ERROR: u32 = 0xff453a; // red
+pub const DELIVERY_PASTED: u32 = 0x2dd4bf; // teal
+
+/// Recording session phase mirrored from `DictationApp` so the pill and the
+/// Диктовка view render the same machine.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PillPhase {
+    /// `dictation.capture.start` in flight.
+    Starting,
+    /// Engine-owned WASAPI capture is live; pill window is visible.
+    Recording,
+    /// `capture.stop` → `speech.transcribe` chain in flight (pill stays open
+    /// showing the processing wave, like Vue's transcribing status).
+    Processing,
+}
+
+/// Footer delivery outcome (Vue `TranscriptDelivery` parity) shown after the
+/// transcribe reply until `DictationApp::schedule_pill_close` fires.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PillDelivery {
+    Pasted,
+    ClipboardOnly,
+    ClipboardFallback,
+    Failed,
+}
 
 impl PillDelivery {
     /// Vue `deliveryLabel()` parity.
@@ -51,6 +77,75 @@ impl PillPhase {
             PillPhase::Processing => "Распознаю",
         }
     }
+}
+
+/// Kbd chip for one hotkey part (Vue `KbdKey` parity — bordered mini-key).
+pub fn kbd(label: impl Into<String>) -> Div {
+    div()
+        .px(px(3.))
+        .rounded(px(3.))
+        .border_1()
+        .border_color(fade(FG(), 0.16))
+        .bg(fade(FG(), 0.06))
+        .text_size(px(9.))
+        .text_color(fade(FG(), 0.8))
+        .child(label.into())
+}
+
+/// Footer hint button — 11px plain text, same hit area semantics as the Vue
+/// `pill-footer__hint` buttons.
+pub fn hint_button(
+    id: &'static str,
+    label: &'static str,
+    primary: bool,
+    cx: &mut Context<DictationPill>,
+    on: impl Fn(&mut DictationPill, &ClickEvent, &mut Window, &mut Context<DictationPill>) + 'static,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap_1()
+        .text_size(px(11.))
+        .text_color(fade(FG(), if primary { 0.92 } else { 0.8 }))
+        .hover(|el| el.text_color(fade(FG(), 0.94)))
+        .on_click(cx.listener(on))
+        .child(label)
+}
+
+/// Open the pill bottom-center of the primary display's work area. Returns
+/// `None` when no display is available or window creation failed — callers
+/// fall back to the in-view status instead of crashing the app.
+pub fn open(
+    manager: Entity<DictationApp>,
+    hotkey: String,
+    cx: &mut App,
+) -> Option<WindowHandle<DictationPill>> {
+    let display = cx.primary_display()?;
+    let area = display.visible_bounds();
+    let origin = point(
+        area.center().x - px(PILL_W / 2.),
+        area.origin.y + area.size.height - px(PILL_H + BOTTOM_MARGIN),
+    );
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin,
+                size: size(px(PILL_W), px(PILL_H)),
+            })),
+            titlebar: None,
+            focus: false,
+            show: true,
+            kind: WindowKind::PopUp,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            window_background: WindowBackgroundAppearance::Transparent,
+            ..Default::default()
+        },
+        move |_, cx| cx.new(|cx| DictationPill::new(manager, PillPhase::Starting, hotkey, cx)),
+    )
+    .ok()
 }
 
 pub struct DictationPill {
@@ -334,7 +429,7 @@ impl Render for DictationPill {
 
 /// CSS cubic-bezier(x1, y1, x2, y2) — Newton-solve x(u)=t, then y(u).
 /// Ported curve for the Vue `pill-in` keyframes.
-fn cubic_bezier(t: f32, _x1: f32, y1: f32, _x2: f32, y2: f32) -> f32 {
+fn cubic_bezier(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
     fn curve(a1: f32, a2: f32, u: f32) -> f32 {
         let i = 1.0 - u;
         3.0 * i * i * u * a1 + 3.0 * i * u * u * a2 + u * u * u
@@ -343,7 +438,6 @@ fn cubic_bezier(t: f32, _x1: f32, y1: f32, _x2: f32, y2: f32) -> f32 {
         let i = 1.0 - u;
         3.0 * i * i * a1 + 6.0 * i * u * (a2 - a1) + 3.0 * u * u * (1.0 - a2)
     }
-    let (x1, x2) = (_x1, _x2);
     let mut u = t;
     for _ in 0..8 {
         let x = curve(x1, x2, u) - t;
