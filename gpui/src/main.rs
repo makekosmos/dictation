@@ -8,6 +8,7 @@ mod app;
 mod assets;
 mod button;
 mod hotkey;
+mod languages;
 mod pill;
 mod pill_wave;
 mod queue;

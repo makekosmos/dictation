@@ -105,8 +105,11 @@ impl Render for DictationApp {
         );
         col = col.child(record);
 
+        // --- Хоткей ---
+        col = col.child(crate::settings::hotkey_card(self, cx));
+
         // --- Настройки (Engine config mirror + update_config controls) ---
-        col = col.child(crate::settings::config_card(self, cx));
+        col = col.child(crate::settings::config_card(self, window, cx));
 
         // --- Последняя расшифровка ---
         let result = self.data("dictation.result");
@@ -170,6 +173,7 @@ pub(crate) fn label_row(label: impl Into<String>) -> Div {
             div()
                 .flex_1()
                 .min_w_0()
+                .whitespace_nowrap()
                 .text_size(px(13.))
                 .child(label.into()),
         )

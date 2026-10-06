@@ -2,10 +2,13 @@
 //! editable settings (`dictation.update_config` — hotkey, idle-unload,
 //! providerEnabled, injectMode, duckAudioDuringRecording, language).
 use ::gpui::{prelude::*, *};
+use gpui_component::searchable_list::SearchableVec;
+use gpui_component::select::{Select, SelectEvent, SelectState};
+use gpui_component::Sizable;
 use serde_json::json;
 
 use crate::app::{DictationApp, Feed};
-use crate::button::btn_id;
+use crate::languages::{language_code, language_items, LangItem};
 use mundus_gpui_kit::fields::*;
 use mundus_gpui_kit::theme::*;
 
@@ -14,17 +17,6 @@ fn trigger_label(mode: &str) -> &'static str {
         "push_to_talk" => "Удержание (push-to-talk)",
         _ => "Переключение (toggle)",
     }
-}
-
-/// Recognition-language chips: (wire code, display label, selected). An
-/// unknown `config.language` selects nothing — the selector then just
-/// doesn't overwrite it until the user picks a chip.
-fn language_options(current: &str) -> [(&'static str, &'static str, bool); 3] {
-    [
-        ("ru", "Русский", current == "ru"),
-        ("en", "English", current == "en"),
-        ("auto", "Авто", current == "auto"),
-    ]
 }
 
 /// One on/off setting: a labelled row whose toggle sends the
@@ -44,7 +36,11 @@ fn toggle_row(
     )
 }
 
-pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
+pub(crate) fn config_card(
+    app: &mut DictationApp,
+    window: &mut Window,
+    cx: &mut Context<DictationApp>,
+) -> AnyElement {
     let state = app.data(Feed::State.slot());
     if state.is_null() {
         return card()
@@ -90,25 +86,56 @@ pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>
         ));
     {
         let language = vstr(cfg, "language");
-        let mut opts = div().flex().items_center().gap_1();
-        for (code, label, selected) in language_options(&language) {
-            opts = opts.child(
-                seg_opt(&format!("dict-lang-{code}"), label, selected).on_click(cx.listener(
-                    move |this, _, _, cx| {
+        // The Select entity needs `&mut Window` at construction, so it is
+        // created lazily on the first render with config loaded, then kept
+        // on DictationApp (it must outlive individual renders).
+        if app.lang_select.is_none() {
+            let entity = cx.new(|cx| {
+                SelectState::new(SearchableVec::new(language_items()), None, window, cx)
+                    .searchable(true)
+            });
+            // `detach` keeps the Confirm → update_config wiring alive for
+            // the entity's lifetime — the entity itself is held on the app.
+            cx.subscribe(
+                &entity,
+                |this, _entity, event: &SelectEvent<SearchableVec<LangItem>>, _cx| {
+                    if let SelectEvent::Confirm(Some(code)) = event {
                         this.update_config(json!({ "language": code }));
-                        cx.notify();
-                    },
-                )),
-            );
+                    }
+                },
+            )
+            .detach();
+            app.lang_select = Some(entity);
         }
-        el = el.child(crate::view::label_row("Язык распознавания").child(opts));
+        let entity = app.lang_select.clone().unwrap();
+        // Mirror `config.language` (first paint, external edits). Programmatic
+        // sets don't emit Confirm, so this never rewrites the Engine value;
+        // an unknown language deselects to the placeholder instead.
+        let selected: Option<&str> = entity.read(cx).selected_value().copied();
+        if selected != Some(language.as_str()) {
+            entity.update(cx, |state, cx| match language_code(&language) {
+                Some(code) => state.set_selected_value(&code, window, cx),
+                None => state.set_selected_index(None, window, cx),
+            });
+        }
+        el = el.child(
+            crate::view::label_row("Язык распознавания").child(
+                div().flex_none().w(px(180.)).child(
+                    Select::new(&entity)
+                        .w_full()
+                        .small()
+                        .placeholder("Выберите язык")
+                        .search_placeholder("Поиск…")
+                        .accessibility_label("Язык распознавания"),
+                ),
+            ),
+        );
     }
 
-    // --- Read-only mirror + hotkey/idle-unload (already wired) ------------
+    // --- Read-only mirror + idle-unload (already wired) -------------------
     el = el.child(kv("Режим", trigger_label(&vstr(cfg, "triggerMode"))));
     el = el.child(kv("Провайдер", vstr(cfg, "provider")));
     el = el.child(kv("Модель", vstr(cfg, "model")));
-    el = el.child(crate::view::label_row("Хоткей").child(hotkey_picker(app, cfg, cx)));
     // Idle unload: number → minutes, null/0 → "Не выгружать".
     let unload_ms = vnum(cfg, "localIdleUnloadMs");
     let current_min = if unload_ms <= 0.0 {
@@ -147,16 +174,36 @@ pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>
     el.into_any_element()
 }
 
+/// «Хоткей» card: the hotkey picker lives outside «Настройки (Engine)» —
+/// same muted placeholder while the Engine state hasn't landed yet.
+pub(crate) fn hotkey_card(app: &DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
+    let state = app.data(Feed::State.slot());
+    if state.is_null() {
+        return card()
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(c(MUTED_FG()))
+                    .child("Подключение к Engine…"),
+            )
+            .into_any_element();
+    }
+    let cfg = vget(&state, "config");
+    card()
+        .child(crate::view::label_row("Хоткей").child(hotkey_picker(app, cfg, cx)))
+        .into_any_element()
+}
+
 /// Shortcut picker (zeron's binding_control shape): one clickable combo
-/// chip — click arms the Engine capture (`dictation.begin_hotkey_capture`),
-/// Esc cancels on the Engine side; the explicit Отмена next to the chip
-/// disarms via `end_hotkey_capture`. While capturing the chip inverts to
-/// the accent wash and reads «Нажмите клавиши…».
+/// chip that toggles the Engine capture — click arms
+/// `dictation.begin_hotkey_capture`, a second click (or Esc on the Engine
+/// side) disarms via `end_hotkey_capture`. While capturing the chip inverts
+/// to the accent wash and reads «Нажмите клавиши…».
 fn hotkey_picker(
     app: &DictationApp,
     cfg: &serde_json::Value,
     cx: &mut Context<DictationApp>,
-) -> Div {
+) -> Stateful<Div> {
     let capturing = app.hotkey_capturing;
     let chip_text: SharedString = if capturing {
         "Нажмите клавиши…".into()
@@ -175,9 +222,15 @@ fn hotkey_picker(
         .justify_center()
         .text_size(px(12.))
         .cursor_pointer()
-        .on_click(cx.listener(|this, _, _, cx| this.hotkey_capture_start(cx)))
+        .on_click(cx.listener(|this, _, _, cx| {
+            if this.hotkey_capturing {
+                this.hotkey_capture_cancel(cx);
+            } else {
+                this.hotkey_capture_start(cx);
+            }
+        }))
         .child(chip_text);
-    let chip = if capturing {
+    if capturing {
         chip.bg(c(ACCENT()).opacity(0.16))
             .border_color(c(ACCENT()).opacity(0.55))
             .text_color(c(FG()))
@@ -186,19 +239,7 @@ fn hotkey_picker(
             .border_color(fade(FG(), 0.16))
             .text_color(fade(FG(), 0.8))
             .hover(|s| s.bg(fade(FG(), 0.12)))
-    };
-    let mut row = div().flex().items_center().gap_2().child(chip);
-    if capturing {
-        row = row.child(
-            btn_id("dict-hotkey-cancel", "Отмена", {
-                cx.listener(|this, _, _, cx| {
-                    this.hotkey_capture_cancel(cx);
-                })
-            })
-            .into_any_element(),
-        );
     }
-    row
 }
 
 /// Segmented-option chip (idle-unload and language selectors) — small
@@ -218,26 +259,5 @@ pub(crate) fn seg_opt(id: &str, label: &'static str, selected: bool) -> Stateful
         el.bg(fade(FG(), 0.08))
             .text_color(fade(FG(), 0.75))
             .hover(|s| s.bg(fade(FG(), 0.14)))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::language_options;
-
-    /// Chips show human labels but keep wire codes; an unknown config value
-    /// selects nothing, so the selector never silently rewrites it.
-    #[test]
-    fn language_options_label_and_select() {
-        let opts = language_options("en");
-        assert_eq!(
-            opts,
-            [
-                ("ru", "Русский", false),
-                ("en", "English", true),
-                ("auto", "Авто", false),
-            ]
-        );
-        assert!(language_options("fr").iter().all(|(_, _, s)| !s));
     }
 }
