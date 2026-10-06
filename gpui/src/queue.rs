@@ -72,9 +72,9 @@ pub(crate) fn stats_rows(v: &serde_json::Value) -> [(&'static str, String); 5] {
     ]
 }
 
-/// Inline confirm row shared by both cards — shows the action's consequences
+/// Inline confirm row shared by the stats, queue and model cards — shows the action's consequences
 /// and the confirming button issues the op.
-fn confirm_row(
+pub(crate) fn confirm_row(
     question: &str,
     hint: &str,
     yes_label: &'static str,

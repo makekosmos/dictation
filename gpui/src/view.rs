@@ -55,9 +55,8 @@ impl Render for DictationApp {
                 .child({
                     let s = vstr(&state, "state");
                     let color = match s.as_str() {
-                        "recording" | "capturing" => DESTRUCTIVE(),
+                        "recording" | "capturing" | "error" => DESTRUCTIVE(),
                         "transcribing" | "waiting" => WARN(),
-                        "error" => DESTRUCTIVE(),
                         _ => SUCCESS(),
                     };
                     badge(state_label(&s), color)
@@ -179,46 +178,48 @@ impl Render for DictationApp {
         // --- Локальные модели ---
         col = col.child(models_card(self, cx));
 
-        // Native-feel titlebar (Agenda pattern): the strip is a
-        // WindowControlArea::Drag region (HTCAPTION → native move/snap), the
-        // trailing controls are platform hitboxes — Windows handles press,
-        // snap flyout and the close button; close destroys the window while
-        // the worker keeps dictation running.
         div()
             .size_full()
             .flex()
             .flex_col()
             .bg(c(BG()))
-            .child(
-                div()
-                    .h(px(30.))
-                    .w_full()
-                    .flex_none()
-                    .flex()
-                    .border_b_1()
-                    .border_color(fade(FG(), 0.10))
-                    .child(
-                        div()
-                            .id("titlebar-drag")
-                            .flex_1()
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .px_3()
-                            .window_control_area(WindowControlArea::Drag)
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(fade(FG(), 0.9))
-                                    .child("Mundus Dictation"),
-                            ),
-                    )
-                    .child(caption_btn("–", WindowControlArea::Min, false))
-                    .child(caption_btn("×", WindowControlArea::Close, true)),
-            )
+            .child(titlebar())
             .child(col)
     }
+}
+
+/// Native-feel titlebar (Agenda pattern): the strip is a
+/// WindowControlArea::Drag region (HTCAPTION → native move/snap), the
+/// trailing controls are platform hitboxes — Windows handles press,
+/// snap flyout and the close button; close destroys the window while
+/// the worker keeps dictation running.
+fn titlebar() -> Div {
+    div()
+        .h(px(30.))
+        .w_full()
+        .flex_none()
+        .flex()
+        .border_b_1()
+        .border_color(fade(FG(), 0.10))
+        .child(
+            div()
+                .id("titlebar-drag")
+                .flex_1()
+                .h_full()
+                .flex()
+                .items_center()
+                .px_3()
+                .window_control_area(WindowControlArea::Drag)
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(fade(FG(), 0.9))
+                        .child("Mundus Dictation"),
+                ),
+        )
+        .child(caption_btn("–", WindowControlArea::Min, false))
+        .child(caption_btn("×", WindowControlArea::Close, true))
 }
 
 fn models_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
@@ -301,29 +302,15 @@ fn models_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyEle
         }
         el = el.child(r);
     }
-    // Inline delete confirm — cheaper than a modal for this utility window.
     if let Some(crate::app::Confirm::DeleteModel(delete_id)) = &app.confirm {
-        let delete_id = delete_id.clone();
-        let yes = delete_id.clone();
-        el = el.child(
-            row(
-                format!("Удалить {delete_id}?"),
-                "Файлы модели будут удалены с диска",
-            )
-            .child(btn(
-                "dict-del-yes",
-                "Удалить",
-                false,
-                cx,
-                move |this, _cx| {
-                    this.action("dictation.delete_local_model", json!({"modelId": yes}));
-                    this.confirm = None;
-                },
-            ))
-            .child(btn("dict-del-no", "Отмена", false, cx, |this, _| {
-                this.confirm = None;
-            })),
-        );
+        let id = delete_id.clone();
+        el = el.child(crate::queue::confirm_row(
+            &format!("Удалить {delete_id}?"),
+            "Файлы модели будут удалены с диска",
+            "Удалить",
+            move |this| this.action("dictation.delete_local_model", json!({"modelId": id})),
+            cx,
+        ));
     }
     // Live download progress from the WS event slot
     // (`dictation_local_model_download_progress`, app.rs::handle_engine_event).
