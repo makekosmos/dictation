@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use std::sync::mpsc::{Receiver, Sender};
 
 use mundus_gpui_kit::engine::Engine;
+use mundus_gpui_kit::engine_error::{EngineError, ErrorKind};
 
 #[derive(Debug)]
 pub enum Command {
@@ -39,7 +40,7 @@ pub enum Command {
 
 pub struct Reply {
     pub slot: String,
-    pub result: Result<Value, String>,
+    pub result: Result<Value, EngineError>,
 }
 
 pub struct Worker {
@@ -126,7 +127,7 @@ impl Worker {
 /// Foreground HWND is captured before the pill window exists — on Windows the
 /// inject path restores focus to it and sends the paste shortcut. Failure is
 /// non-fatal (clipboard-only fallback in the runtime).
-fn dictation_start(engine: &Engine) -> Result<Value, String> {
+fn dictation_start(engine: &Engine) -> Result<Value, EngineError> {
     let _ = engine.rpc("dictation.capture_foreground_window", json!({}));
     engine.rpc("dictation.capture.start", json!({}))
 }
@@ -139,9 +140,12 @@ fn dictation_transcribe(
     engine: &Engine,
     audio_b64: &str,
     duration_sec: f64,
-) -> Result<Value, String> {
+) -> Result<Value, EngineError> {
     if audio_b64.is_empty() {
-        return Err("Engine не вернул аудио записи".into());
+        return Err(EngineError::local(
+            ErrorKind::Malformed,
+            "capture.stop reply missing audioB64",
+        ));
     }
     let _ = engine.rpc("dictation.capture_foreground_window", json!({}));
     engine.rpc(
@@ -152,7 +156,7 @@ fn dictation_transcribe(
 
 /// `dictation.cancel` resets the state machine but leaves a live capture
 /// session marked busy, so the session is stopped (audio discarded) first.
-fn dictation_cancel(engine: &Engine, capture_id: Option<&str>) -> Result<Value, String> {
+fn dictation_cancel(engine: &Engine, capture_id: Option<&str>) -> Result<Value, EngineError> {
     if let Some(id) = capture_id {
         let _ = engine.rpc("dictation.capture.stop", json!({ "captureId": id }));
     }

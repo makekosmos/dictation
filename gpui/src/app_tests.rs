@@ -3,6 +3,7 @@ use crate::hotkey::{build_accelerator, vk_to_key_name};
 use crate::session::{should_adopt_capture, state_broadcast_ended};
 use crate::worker::Reply;
 use gpui::{AppContext, Entity, TestAppContext};
+use mundus_gpui_kit::engine_error::{EngineError, ErrorKind};
 use serde_json::{json, Value};
 use std::sync::mpsc::{Receiver, Sender};
 
@@ -120,13 +121,16 @@ fn action_failure_sets_error(cx: &mut TestAppContext) {
     replies
         .send(Reply {
             slot: "@action".into(),
-            result: Err("discard: uuid 'u1' не найден".into()),
+            result: Err(EngineError::engine("not-found")),
         })
         .unwrap();
     cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
     cx.update(|cx| {
         app.update(cx, |this, _| {
-            assert_eq!(this.error.as_deref(), Some("discard: uuid 'u1' не найден"));
+            assert_eq!(
+                this.error.as_deref(),
+                Some(EngineError::engine("not-found").message().as_str())
+            );
             assert!(this.notice.is_none());
         })
     });
@@ -296,7 +300,7 @@ fn queue_item_in_flight_until_pending_refresh(cx: &mut TestAppContext) {
     replies
         .send(Reply {
             slot: "@action".into(),
-            result: Err("retry: uuid 'u2' не найден".into()),
+            result: Err(EngineError::engine("not-found")),
         })
         .unwrap();
     cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
@@ -331,7 +335,7 @@ fn retry_skips_in_flight_ops(cx: &mut TestAppContext) {
     replies
         .send(Reply {
             slot: "dictation.stats".into(),
-            result: Err("Engine offline".into()),
+            result: Err(EngineError::local(ErrorKind::NotRunning, "Engine offline")),
         })
         .unwrap();
     for _ in 0..67 {
@@ -378,7 +382,7 @@ fn retry_marks_slot_failed_when_worker_dead(cx: &mut TestAppContext) {
     replies
         .send(Reply {
             slot: "dictation.stats".into(),
-            result: Err("Engine offline".into()),
+            result: Err(EngineError::local(ErrorKind::NotRunning, "Engine offline")),
         })
         .unwrap();
     cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));

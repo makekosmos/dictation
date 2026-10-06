@@ -351,6 +351,13 @@ impl DictationApp {
     }
 
     fn handle_reply(&mut self, reply: crate::worker::Reply, cx: &mut Context<Self>) {
+        // EngineError splits at the boundary: Display (kind + raw engine
+        // code) goes to the log, message() is the user-facing Russian text
+        // that lands in the banner, the pill and Slot::Failed (KOS-303).
+        let result = reply.result.map_err(|e| {
+            eprintln!("dictation-gpui: {} failed: {e}", reply.slot);
+            e.message()
+        });
         // Sessioned ops carry `name@session`; replies from a preempted session
         // must not mutate the new session's state. Only dictation.pill slots
         // are tagged — "@action" is a slot name itself.
@@ -370,7 +377,7 @@ impl DictationApp {
             // sidecar, and an errored stale start created nothing to clean.
             // The orphan's own capture.stop already returns Engine to idle.
             if slot == "dictation.pill.start" {
-                if let Some(capture_id) = reply.result.ok().and_then(|v| {
+                if let Some(capture_id) = result.as_ref().ok().and_then(|v| {
                     v.get("captureId")
                         .and_then(Value::as_str)
                         .map(str::to_string)
@@ -385,7 +392,7 @@ impl DictationApp {
             return;
         }
         match slot.as_str() {
-            "dictation.pill.start" => match reply.result {
+            "dictation.pill.start" => match result {
                 Ok(v) => {
                     let capture_id = v
                         .get("captureId")
@@ -417,7 +424,7 @@ impl DictationApp {
                 }
                 Err(e) => self.fail_pill(e, cx),
             },
-            "dictation.pill.stop" => match reply.result {
+            "dictation.pill.stop" => match result {
                 Ok(v) => {
                     // speech.transcribe's reply has no durationMs — carry it
                     // over so the result card shows the record length.
@@ -443,7 +450,7 @@ impl DictationApp {
                 }
                 Err(e) => self.fail_pill(e, cx),
             },
-            "dictation.pill.result" => match reply.result {
+            "dictation.pill.result" => match result {
                 Ok(mut v) => {
                     if v.get("cancelled").and_then(Value::as_bool) == Some(true) {
                         self.end_pill_session(cx);
@@ -468,7 +475,7 @@ impl DictationApp {
                 Err(e) => self.fail_pill(e, cx),
             },
             "dictation.pill.cancel" => {
-                if let Err(e) = reply.result {
+                if let Err(e) = result {
                     self.error = Some(e);
                     cx.notify();
                 }
@@ -477,13 +484,13 @@ impl DictationApp {
                 // Armed: capture_key / capture_cancelled events drive the
                 // rest. A failed arm must clear the flag or the status
                 // window is stuck showing "Нажмите комбинацию…" forever.
-                if let Err(e) = reply.result {
+                if let Err(e) = result {
                     self.hotkey_capturing = false;
                     self.error = Some(e);
                     cx.notify();
                 }
             }
-            "@action" => match reply.result {
+            "@action" => match result {
                 Ok(_) => {
                     // A succeeded write IS the retry succeeding — clear the
                     // persistent banner like the pill.result arm does, or a
@@ -507,7 +514,7 @@ impl DictationApp {
                 let slot = slot.to_string();
                 self.slots.insert(
                     slot.clone(),
-                    match reply.result {
+                    match result {
                         Ok(v) => Slot::Ready(v),
                         Err(e) => Slot::Failed(e),
                     },
