@@ -100,9 +100,6 @@ impl Render for DictationApp {
         // --- Модель ---
         col = col.child(crate::settings::language_model_card(self, window, cx));
 
-        // --- Выгрузка модели ---
-        col = col.child(crate::settings::unload_card(self, cx));
-
         // --- Настройки (Engine config mirror + update_config controls) ---
         col = col.child(crate::settings::config_card(self, window, cx));
 

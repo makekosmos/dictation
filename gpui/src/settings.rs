@@ -292,20 +292,26 @@ pub(crate) fn language_model_card(
                 .collect()
         })
         .unwrap_or_default();
+    let row_pad = |row: Div| row.px(px(16.)).py(px(4.));
     let mut el = crate::view::plate()
+        .px(px(0.))
+        .py(px(0.))
         .gap(px(0.))
-        .child(language_row(app, cfg, window, cx))
+        .child(row_pad(language_row(app, cfg, window, cx)))
         .child(hairline());
 
     if items.is_empty() {
         return el
-            .child(
+            .child(row_pad(
                 div()
-                    .py(px(8.))
+                    .w_full()
+                    .min_h_10()
+                    .flex()
+                    .items_center()
                     .text_size(px(12.))
                     .text_color(c(MUTED_FG()))
                     .child("Скачай модель в Manager → «Модели»"),
-            )
+            ))
             .into_any_element();
     }
 
@@ -349,7 +355,7 @@ pub(crate) fn language_model_card(
         }
     });
 
-    el = el.child(
+    el = el.child(row_pad(
         crate::view::label_row("Модель").child(
             div().flex_none().w(px(180.)).child(
                 Select::new(&entity)
@@ -360,13 +366,15 @@ pub(crate) fn language_model_card(
                     .accessibility_label("Модель"),
             ),
         ),
-    );
+    ));
+    el = el.child(hairline()).child(row_pad(unload_row(app, cx)));
     el.into_any_element()
 }
 
-/// «Выгрузка модели» card — локальная модель выгружается из памяти после
-/// простоя; `localIdleUnloadMs` в минутах, `None` = никогда.
-pub(crate) fn unload_card(app: &DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
+/// «Выгрузка модели» row — локальная модель выгружается из памяти после
+/// простоя; `localIdleUnloadMs` в минутах, `None` = никогда. Lives inside
+/// the shared language/model/unload plate now.
+fn unload_row(app: &DictationApp, cx: &mut Context<DictationApp>) -> Div {
     let state = app.data(Feed::State.slot());
     let cfg = vget(&state, "config");
     let unload_ms = vnum(cfg, "localIdleUnloadMs");
@@ -394,23 +402,19 @@ pub(crate) fn unload_card(app: &DictationApp, cx: &mut Context<DictationApp>) ->
         );
     }
 
-    crate::view::plate()
+    div()
+        .w_full()
+        .min_h_10()
+        .flex()
+        .items_center()
+        .gap_3()
         .child(
             div()
-                .w_full()
-                .min_h_10()
-                .flex()
-                .items_center()
-                .gap_3()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .whitespace_nowrap()
-                        .text_size(px(13.))
-                        .child("Выгрузка модели"),
-                )
-                .child(opts),
+                .flex_1()
+                .min_w_0()
+                .whitespace_nowrap()
+                .text_size(px(13.))
+                .child("Выгрузка модели"),
         )
-        .into_any_element()
+        .child(opts)
 }
