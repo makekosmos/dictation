@@ -5,7 +5,7 @@ use ::gpui::{prelude::*, *};
 use serde_json::json;
 
 use crate::app::{DictationApp, Feed};
-use crate::button::{btn, btn_id};
+use crate::button::btn_id;
 use mundus_gpui_kit::fields::*;
 use mundus_gpui_kit::theme::*;
 
@@ -108,43 +108,7 @@ pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>
     el = el.child(kv("Режим", trigger_label(&vstr(cfg, "triggerMode"))));
     el = el.child(kv("Провайдер", vstr(cfg, "provider")));
     el = el.child(kv("Модель", vstr(cfg, "model")));
-    el = el.child(
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .child(kv("Хоткей", vstr(cfg, "hotkey")))
-            .child(if app.hotkey_capturing {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(c(WARN()))
-                            .child("Нажмите комбинацию… (Esc — отмена)"),
-                    )
-                    .child(
-                        btn_id("dict-hotkey-cancel", "Отмена", {
-                            cx.listener(|this, _, _, cx| {
-                                this.hotkey_capture_cancel(cx);
-                            })
-                        })
-                        .into_any_element(),
-                    )
-                    .into_any_element()
-            } else {
-                btn(
-                    "dict-hotkey-capture",
-                    "Изменить",
-                    false,
-                    cx,
-                    |this, cx| this.hotkey_capture_start(cx),
-                )
-                .into_any_element()
-            }),
-    );
+    el = el.child(crate::view::label_row("Хоткей").child(hotkey_picker(app, cfg, cx)));
     // Idle unload: number → minutes, null/0 → "Не выгружать".
     let unload_ms = vnum(cfg, "localIdleUnloadMs");
     let current_min = if unload_ms <= 0.0 {
@@ -181,6 +145,60 @@ pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>
         el = el.child(kv("Последняя ошибка", err));
     }
     el.into_any_element()
+}
+
+/// Shortcut picker (zeron's binding_control shape): one clickable combo
+/// chip — click arms the Engine capture (`dictation.begin_hotkey_capture`),
+/// Esc cancels on the Engine side; the explicit Отмена next to the chip
+/// disarms via `end_hotkey_capture`. While capturing the chip inverts to
+/// the accent wash and reads «Нажмите клавиши…».
+fn hotkey_picker(
+    app: &DictationApp,
+    cfg: &serde_json::Value,
+    cx: &mut Context<DictationApp>,
+) -> Div {
+    let capturing = app.hotkey_capturing;
+    let chip_text: SharedString = if capturing {
+        "Нажмите клавиши…".into()
+    } else {
+        vstr(cfg, "hotkey").into()
+    };
+    let chip = div()
+        .id("dict-hotkey-capture")
+        .min_w(px(96.))
+        .h(px(28.))
+        .px(px(12.))
+        .rounded(px(8.))
+        .border_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px(12.))
+        .cursor_pointer()
+        .on_click(cx.listener(|this, _, _, cx| this.hotkey_capture_start(cx)))
+        .child(chip_text);
+    let chip = if capturing {
+        chip.bg(c(ACCENT()).opacity(0.16))
+            .border_color(c(ACCENT()).opacity(0.55))
+            .text_color(c(FG()))
+    } else {
+        chip.bg(fade(FG(), 0.06))
+            .border_color(fade(FG(), 0.16))
+            .text_color(fade(FG(), 0.8))
+            .hover(|s| s.bg(fade(FG(), 0.12)))
+    };
+    let mut row = div().flex().items_center().gap_2().child(chip);
+    if capturing {
+        row = row.child(
+            btn_id("dict-hotkey-cancel", "Отмена", {
+                cx.listener(|this, _, _, cx| {
+                    this.hotkey_capture_cancel(cx);
+                })
+            })
+            .into_any_element(),
+        );
+    }
+    row
 }
 
 /// Segmented-option chip (idle-unload and language selectors) — small

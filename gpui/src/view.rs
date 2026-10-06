@@ -24,9 +24,6 @@ fn state_label(state: &str) -> &'static str {
 impl Render for DictationApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.data(Feed::State.slot());
-        let cfg = vget(&state, "config");
-        let hotkey = vstr(cfg, "hotkey");
-
         let mut col = div()
             .flex_1()
             .w_full()
@@ -89,7 +86,7 @@ impl Render for DictationApp {
             None => "Начать запись",
         };
         let busy = phase.is_some();
-        let mut record = card().child(
+        let record = card().child(
             label_row("Диктовка")
                 .child(btn("dictation-toggle", label, true, cx, |this, cx| {
                     this.dictation_toggle(cx);
@@ -106,24 +103,6 @@ impl Render for DictationApp {
                     ))
                 }),
         );
-        if !hotkey.is_empty() {
-            record = record.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .text_size(px(11.))
-                    .text_color(c(MUTED_FG()))
-                    .child("Горячая клавиша:")
-                    .children(
-                        hotkey
-                            .split('+')
-                            .map(str::trim)
-                            .filter(|p| !p.is_empty())
-                            .map(|p| crate::pill::kbd(p.to_string())),
-                    ),
-            );
-        }
         col = col.child(record);
 
         // --- Настройки (Engine config mirror + update_config controls) ---
