@@ -4,7 +4,6 @@
 //! is `pill.rs` — a separate always-on-top window.
 use ::gpui::{prelude::*, *};
 use gpui_component::scroll::ScrollableElement;
-use gpui_component::InteractiveElementExt;
 use serde_json::json;
 
 use crate::app::{DictationApp, Feed};
@@ -195,16 +194,11 @@ impl Render for DictationApp {
 /// caption hitboxes; macOS draws its own — do not duplicate min/close.
 /// Close destroys the window while the worker keeps dictation running.
 fn titlebar(window: &Window) -> Div {
-    #[allow(unused_mut)]
-    let mut drag = div()
+    let drag = div()
         .id("titlebar-drag")
         .flex_1()
         .h_full()
         .window_control_area(WindowControlArea::Drag);
-    #[cfg(target_os = "macos")]
-    {
-        drag = drag.on_double_click(|_, window, _| window.titlebar_double_click());
-    }
     imago_gpui::chrome::titlebar()
         .p_0()
         .w_full()
