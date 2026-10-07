@@ -12,7 +12,7 @@ transcription providers and text injection remain Engine-owned (cortex
 cargo fmt --manifest-path gpui/Cargo.toml -- --check
 cargo clippy --locked --manifest-path gpui/Cargo.toml --all-targets --all-features -- -D warnings
 cargo test --locked --manifest-path gpui/Cargo.toml --all-features
-python scripts/test_release.py
+node --test scripts/test_release.mjs
 ```
 
 `build.yml` checks and builds the app on Windows, Linux and macOS for every

@@ -39,17 +39,17 @@ jobs:
         run: test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
       - id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          python-version: '3.12'
+          node-version: '24'
       - name: Test version rules
-        run: python scripts/test_release.py
+        run: node --test scripts/test_release.mjs
       - name: Plan release
         id: plan
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python scripts/release.py plan
+        run: node scripts/release.mjs plan
 
   build:
     needs: prepare
@@ -78,12 +78,12 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          python-version: '3.12'
+          node-version: '24'
       - name: Apply release version
         if: needs.prepare.outputs.release == 'true'
-        run: python scripts/release.py set "$RELEASE_VERSION"
+        run: node scripts/release.mjs set "$RELEASE_VERSION"
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
@@ -115,7 +115,7 @@ jobs:
       - name: Release build
         run: cargo build --locked --release --bin dictation-gpui --manifest-path gpui/Cargo.toml --target "$BUILD_TARGET"
       - name: Package
-        run: python scripts/release.py package "$BUILD_TARGET"
+        run: node scripts/release.mjs package "$BUILD_TARGET"
       - uses: actions/upload-artifact@v7
         with:
           name: dictation-gpui-${{ matrix.target }}
@@ -143,24 +143,24 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          python-version: '3.12'
+          node-version: '24'
       - uses: actions/download-artifact@v8
         with:
           pattern: dictation-gpui-*
           merge-multiple: true
           path: dist
       - name: Commit version and tag the tested source
-        run: bash scripts/publish-version.sh
+        run: node scripts/publish-version.mjs
       - name: Publish all platforms together
         run: |
           tag="gpui-v$RELEASE_VERSION"
           cd dist
-          sha256sum *.zip *.tar.gz > SHA256SUMS.txt
+          sha256sum -- *.zip *.tar.gz > SHA256SUMS.txt
           cd ..
           if gh release view "$tag" --json isDraft > release-state.json; then
-            python -c 'import json; assert json.load(open("release-state.json"))["isDraft"], "Release already published"'
+            node -e 'if (!JSON.parse(require("fs").readFileSync("release-state.json", "utf8")).isDraft) throw new Error("Release already published")'
             gh release upload "$tag" dist/* --clobber
           else
             gh release create "$tag" dist/* --verify-tag --draft --title "Dictation GPUI $tag" --generate-notes

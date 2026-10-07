@@ -1,4 +1,5 @@
 dist/
 .tmp/
 __pycache__/
+node_modules/
 gpui/target/

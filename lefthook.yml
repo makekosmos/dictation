@@ -1,0 +1,39 @@
+glob_matcher: doublestar
+
+# The crate lives in gpui/; hook the inputs that change how it builds or lints.
+pre-commit:
+  parallel: false
+  commands:
+    cargo-check:
+      glob:
+        - "gpui/**/*.rs"
+        - "gpui/Cargo.toml"
+        - "gpui/Cargo.lock"
+        - "rust-toolchain*"
+        - ".cargo/**"
+      run: cargo check --quiet --manifest-path gpui/Cargo.toml
+    rustfmt:
+      glob: "gpui/**/*.rs"
+      run: cargo fmt --manifest-path gpui/Cargo.toml -- --check
+
+# Whole-project steps: run on every push. They take no file list on purpose —
+# a push must not skip the gate when file matching fails.
+pre-push:
+  parallel: false
+  commands:
+    test:
+      run: cargo test --locked --manifest-path gpui/Cargo.toml --all-features
+    clippy:
+      run: cargo clippy --locked --manifest-path gpui/Cargo.toml --all-targets --all-features -- -D warnings
+    release-rules:
+      run: node --test scripts/test_release.mjs
+
+check:
+  parallel: false
+  commands:
+    test:
+      run: cargo test --locked --manifest-path gpui/Cargo.toml --all-features
+    clippy:
+      run: cargo clippy --locked --manifest-path gpui/Cargo.toml --all-targets --all-features -- -D warnings
+    release-rules:
+      run: node --test scripts/test_release.mjs
