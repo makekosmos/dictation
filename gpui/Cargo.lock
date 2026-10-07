@@ -3374,11 +3374,15 @@ checksum = "09e54e57b4c48b40f7aec75635392b12b3421fa26fe8b4332e63138ed278459c"
 [[package]]
 name = "imago-gpui"
 version = "0.1.0"
-source = "git+https://github.com/makekosmos/imago.git?rev=b9dd284e70a56a151b525626c3b2463679cb8c9a#b9dd284e70a56a151b525626c3b2463679cb8c9a"
+source = "git+https://github.com/makekosmos/imago.git?rev=c7ae7944782af5ec903c6332bfef362bb03e03b8#c7ae7944782af5ec903c6332bfef362bb03e03b8"
 dependencies = [
  "gpui-base",
  "gpui-component",
  "gpui-kit",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4055,7 +4059,7 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 [[package]]
 name = "mundus-gpui-kit"
 version = "0.2.0"
-source = "git+https://github.com/makekosmos/kosmos-gpui-kit?rev=eadede171ddab5742f8565305d03110abdfa13ff#eadede171ddab5742f8565305d03110abdfa13ff"
+source = "git+https://github.com/makekosmos/imago.git?rev=c7ae7944782af5ec903c6332bfef362bb03e03b8#c7ae7944782af5ec903c6332bfef362bb03e03b8"
 dependencies = [
  "gpui-component",
  "gpui-kit",

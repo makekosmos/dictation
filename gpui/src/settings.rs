@@ -2,52 +2,71 @@
 //! editable settings (`dictation.update_config` — hotkey, idle-unload,
 //! providerEnabled, injectMode, duckAudioDuringRecording, language).
 use ::gpui::{prelude::*, *};
-use serde_json::json;
+use gpui_component::searchable_list::{SearchableListItem, SearchableVec};
+use gpui_component::select::{Select, SelectEvent, SelectState};
+use gpui_component::Sizable;
+use serde_json::{json, Value};
 
 use crate::app::{DictationApp, Feed};
+use crate::languages::{language_code, language_items, LangItem};
 use mundus_gpui_kit::fields::*;
 use mundus_gpui_kit::theme::*;
 
-fn trigger_label(mode: &str) -> &'static str {
-    match mode {
-        "push_to_talk" => "Удержание (push-to-talk)",
-        _ => "Переключение (toggle)",
+/// One row of the model `Select`: `id` goes to `dictation.use_local_model`,
+/// `label` is the display name. Search hits both (mirrors `LangItem`).
+#[derive(Debug, Clone)]
+pub(crate) struct ModelItem {
+    id: String,
+    label: String,
+}
+
+impl SearchableListItem for ModelItem {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        SharedString::from(self.label.clone())
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.id
+    }
+
+    fn matches(&self, query: &str) -> bool {
+        let query = query.to_lowercase();
+        self.label.to_lowercase().contains(&query) || self.id.contains(&query)
     }
 }
 
-/// Recognition-language chips: (wire code, display label, selected). An
-/// unknown `config.language` selects nothing — the selector then just
-/// doesn't overwrite it until the user picks a chip.
-fn language_options(current: &str) -> [(&'static str, &'static str, bool); 3] {
-    [
-        ("ru", "Русский", current == "ru"),
-        ("en", "English", current == "en"),
-        ("auto", "Авто", current == "auto"),
-    ]
-}
+/// The lazily-created select entity stored on `DictationApp`.
+pub(crate) type ModelSelect = Entity<SelectState<SearchableVec<ModelItem>>>;
 
 /// One on/off setting: a labelled row whose toggle sends the
 /// `dictation.update_config` patch `patch(checked)`.
 fn toggle_row(
+    st: &imago_gpui::settings::UiStyle,
+    first: bool,
     id: &'static str,
     label: &'static str,
-    hint: &'static str,
     checked: bool,
     patch: impl Fn(bool) -> serde_json::Value + 'static,
     cx: &mut Context<DictationApp>,
 ) -> Div {
-    row(label, hint).child(
-        toggle(id, checked, cx, move |this, on, _| {
+    card_row(st, first, label).child(
+        imago_gpui::toggle::toggle(id, checked, cx, move |this, on, _| {
             this.update_config(patch(on))
         })
         .accessibility_label(label),
     )
 }
 
-pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
+pub(crate) fn config_card(
+    app: &mut DictationApp,
+    _window: &mut Window,
+    cx: &mut Context<DictationApp>,
+) -> AnyElement {
     let state = app.data(Feed::State.slot());
     if state.is_null() {
-        return card()
+        return crate::view::plate()
             .child(
                 div()
                     .text_size(px(12.))
@@ -58,111 +77,348 @@ pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>
     }
     let cfg = vget(&state, "config");
 
-    let mut el = card().child(
-        div()
-            .text_size(px(12.))
-            .text_color(c(MUTED_FG()))
-            .child("Настройки (Engine)"),
-    );
+    let st = style();
+    let mut el = st.settings_card();
 
     // --- Editable settings (dictation.update_config — applies live) -------
     el = el
         .child(toggle_row(
+            &st,
+            true,
             "dict-provider-enabled",
             "Диктовка включена",
-            // Engine submits audio to the pending queue first, then checks
-            // `provider_enabled` and fails the session — the recording stays
-            // in the queue for a later retry (host_capture.rs::submit_audio).
-            "Запись сохраняется в очередь, но не распознаётся",
             vbool(cfg, "providerEnabled"),
             |on| json!({ "providerEnabled": on }),
             cx,
         ))
         .child(toggle_row(
+            &st,
+            false,
             "dict-autopaste",
             "Вставлять текст автоматически",
-            "Иначе результат только копируется в буфер обмена",
             vstr(cfg, "injectMode") != "clipboard_only",
             |on| json!({ "injectMode": if on { "auto_paste" } else { "clipboard_only" } }),
             cx,
         ))
         .child(toggle_row(
+            &st,
+            false,
             "dict-duck",
             "Приглушать звук при записи",
-            "Понижает системную громкость, пока идёт диктовка",
             vbool(cfg, "duckAudioDuringRecording"),
             |on| json!({ "duckAudioDuringRecording": on }),
             cx,
-        ));
-    {
-        let language = vstr(cfg, "language");
-        let mut opts = div().flex().items_center().gap_1();
-        for (code, label, selected) in language_options(&language) {
-            opts = opts.child(
-                seg_opt(&format!("dict-lang-{code}"), label, selected).on_click(cx.listener(
-                    move |this, _, _, cx| {
-                        this.update_config(json!({ "language": code }));
-                        cx.notify();
-                    },
-                )),
-            );
-        }
-        el = el.child(row("Язык распознавания", "«Авто» — определить автоматически").child(opts));
-    }
-
-    // --- Read-only mirror + hotkey/idle-unload (already wired) ------------
-    el = el.child(kv("Режим", trigger_label(&vstr(cfg, "triggerMode"))));
-    el = el.child(kv("Провайдер", vstr(cfg, "provider")));
-    el = el.child(kv("Модель", vstr(cfg, "model")));
-    el = el.child(
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .child(kv("Хоткей", vstr(cfg, "hotkey")))
-            .child(if app.hotkey_capturing {
+        ))
+        .child(
+            card_row(&st, false, "Вид панели").child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
+                    .gap_1()
                     .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(c(WARN()))
-                            .child("Нажмите комбинацию… (Esc — отмена)"),
+                        seg_opt(
+                            "pill-style-large",
+                            "Большой",
+                            vstr(cfg, "pillStyle") != "compact",
+                        )
+                        .on_click(cx.listener(|this, _, _, _| {
+                            this.update_config(json!({ "pillStyle": "large" }));
+                        })),
                     )
                     .child(
-                        btn_id("dict-hotkey-cancel", "Отмена", {
-                            cx.listener(|this, _, _, cx| {
-                                this.hotkey_capture_cancel(cx);
-                            })
-                        })
-                        .into_any_element(),
-                    )
-                    .into_any_element()
+                        seg_opt(
+                            "pill-style-compact",
+                            "Мини",
+                            vstr(cfg, "pillStyle") == "compact",
+                        )
+                        .on_click(cx.listener(|this, _, _, _| {
+                            this.update_config(json!({ "pillStyle": "compact" }));
+                        })),
+                    ),
+            ),
+        );
+    // --- Read-only mirror ------------------------------------------------
+
+    if let Some(err) = vopt(&state, "lastError") {
+        el = el.child(kv("Последняя ошибка", err));
+    }
+    el.into_any_element()
+}
+
+/// «Язык» row — same searchable Select, reused inside the merged
+/// language+model card.
+fn language_row(
+    app: &mut DictationApp,
+    cfg: &Value,
+    window: &mut Window,
+    cx: &mut Context<DictationApp>,
+) -> Div {
+    let language = vstr(cfg, "language");
+    // The Select entity needs `&mut Window` at construction, so it is
+    // created lazily on the first render with config loaded, then kept
+    // on DictationApp (it must outlive individual renders).
+    if app.lang_select.is_none() {
+        let entity = cx.new(|cx| {
+            SelectState::new(SearchableVec::new(language_items()), None, window, cx)
+                .searchable(true)
+        });
+        // `detach` keeps the Confirm → update_config wiring alive for
+        // the entity's lifetime — the entity itself is held on the app.
+        cx.subscribe(
+            &entity,
+            |this, _entity, event: &SelectEvent<SearchableVec<LangItem>>, _cx| {
+                if let SelectEvent::Confirm(Some(code)) = event {
+                    this.update_config(json!({ "language": code }));
+                }
+            },
+        )
+        .detach();
+        app.lang_select = Some(entity);
+    }
+    let entity = app.lang_select.clone().unwrap();
+    // Mirror `config.language` (first paint, external edits). Programmatic
+    // sets don't emit Confirm, so this never rewrites the Engine value;
+    // an unknown language deselects to the placeholder instead.
+    let selected: Option<&str> = entity.read(cx).selected_value().copied();
+    if selected != Some(language.as_str()) {
+        entity.update(cx, |state, cx| match language_code(&language) {
+            Some(code) => state.set_selected_value(&code, window, cx),
+            None => state.set_selected_index(None, window, cx),
+        });
+    }
+    card_row(&style(), true, "Язык").child(
+        div().flex_none().w(px(180.)).child(
+            Select::new(&entity)
+                .w_full()
+                .small()
+                .placeholder("Выберите язык")
+                .search_placeholder("Поиск…")
+                .accessibility_label("Язык распознавания"),
+        ),
+    )
+}
+
+/// Shared row geometry for cards whose rows are divided by the Manager
+/// hairline — `settings_card` + `card_row`, never hand-tuned paddings.
+fn style() -> imago_gpui::settings::UiStyle {
+    imago_gpui::settings::UiStyle::default()
+}
+
+/// One row inside `settings_card`: title on the left, control on the right.
+fn card_row(st: &imago_gpui::settings::UiStyle, first: bool, title: &str) -> Div {
+    st.card_row(first)
+        .child(st.row_title(title))
+        .child(div().flex_1().min_w_0())
+}
+
+/// «Хоткей» card: the hotkey picker lives outside «Настройки (Engine)» —
+/// same muted placeholder while the Engine state hasn't landed yet.
+pub(crate) fn hotkey_card(app: &DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
+    let state = app.data(Feed::State.slot());
+    if state.is_null() {
+        return crate::view::plate()
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(c(MUTED_FG()))
+                    .child("Подключение к Engine…"),
+            )
+            .into_any_element();
+    }
+    let cfg = vget(&state, "config");
+    style()
+        .settings_card()
+        .child(card_row(&style(), true, "Хоткей").child(hotkey_picker(app, cfg, cx)))
+        .into_any_element()
+}
+
+/// Shortcut picker (zeron's binding_control shape): one clickable combo
+/// chip that toggles the Engine capture — click arms
+/// `dictation.begin_hotkey_capture`, a second click (or Esc on the Engine
+/// side) disarms via `end_hotkey_capture`. While capturing the chip inverts
+/// to the accent wash and reads «Нажмите клавиши…».
+fn hotkey_picker(
+    app: &DictationApp,
+    cfg: &serde_json::Value,
+    cx: &mut Context<DictationApp>,
+) -> Stateful<Div> {
+    let capturing = app.hotkey_capturing;
+    let chip_text: SharedString = if capturing {
+        "Нажмите клавиши…".into()
+    } else {
+        match vstr(cfg, "hotkey").as_str() {
+            "FnFn" => "Fn + Fn".into(),
+            other => other.into(),
+        }
+    };
+    let chip = div()
+        .id("dict-hotkey-capture")
+        .min_w(px(96.))
+        .h(px(28.))
+        .px(px(12.))
+        .rounded(px(8.))
+        .border_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px(12.))
+        .cursor_pointer()
+        .on_click(cx.listener(|this, _, _, cx| {
+            if this.hotkey_capturing {
+                this.hotkey_capture_cancel(cx);
             } else {
-                btn(
-                    "dict-hotkey-capture",
-                    "Изменить",
-                    false,
-                    cx,
-                    |this, cx| this.hotkey_capture_start(cx),
-                )
-                .into_any_element()
-            }),
+                this.hotkey_capture_start(cx);
+            }
+        }))
+        .child(chip_text);
+    if capturing {
+        chip.bg(c(crate::theme::accent()).opacity(0.16))
+            .border_color(c(crate::theme::accent()).opacity(0.55))
+            .text_color(c(FG()))
+    } else {
+        chip.bg(fade(FG(), 0.06))
+            .border_color(fade(FG(), 0.16))
+            .text_color(fade(FG(), 0.8))
+            .hover(|s| s.bg(fade(FG(), 0.12)))
+    }
+}
+
+/// Segmented-option chip (idle-unload and language selectors) — small
+/// clickable token, highlighted when `selected`.
+pub(crate) fn seg_opt(id: &str, label: &'static str, selected: bool) -> Stateful<Div> {
+    let el = div()
+        .id(SharedString::from(id.to_string()))
+        .px(px(7.))
+        .py(px(2.))
+        .rounded(px(4.))
+        .text_size(px(11.))
+        .cursor_pointer()
+        .child(label);
+    if selected {
+        el.bg(c(crate::theme::accent())).text_color(c(BG()))
+    } else {
+        el.bg(fade(FG(), 0.08))
+            .text_color(fade(FG(), 0.75))
+            .hover(|s| s.bg(fade(FG(), 0.14)))
+    }
+}
+
+/// «Модель» card — выбор локальной модели тем же searchable `Select`, что
+/// и «Язык распознавания». В списке только модели, которые Engine реально
+/// может запустить: скачанные, поддерживающие транскриб и для
+/// whisper-семейства — при наличии whisper.cpp sidecar'а.
+pub(crate) fn language_model_card(
+    app: &mut DictationApp,
+    window: &mut Window,
+    cx: &mut Context<DictationApp>,
+) -> AnyElement {
+    let state = app.data(Feed::State.slot());
+    let cfg = vget(&state, "config");
+    let data = app.data(Feed::Models.slot());
+    let command_installed = vbool(&data, "commandInstalled");
+    let items: Vec<ModelItem> = vget(&data, "models")
+        .as_array()
+        .map(|models| {
+            models
+                .iter()
+                .filter(|m| {
+                    let id = vstr(m, "id");
+                    vbool(m, "downloaded")
+                        && vbool(m, "transcriptionSupported")
+                        && (id.starts_with("parakeet") || command_installed)
+                })
+                .map(|m| ModelItem {
+                    id: vstr(m, "id").to_string(),
+                    label: vstr(m, "name").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let st = style();
+    let mut el = st.settings_card().child(language_row(app, cfg, window, cx));
+
+    if items.is_empty() {
+        return el
+            .child(
+                st.card_row(false).child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(c(MUTED_FG()))
+                        .child("Скачай модель в Manager → «Модели»"),
+                ),
+            )
+            .into_any_element();
+    }
+
+    // Current selection from the feed (`selected` flag Engine recomputes).
+    let current: Option<String> = vget(&data, "models").as_array().and_then(|models| {
+        models
+            .iter()
+            .find(|m| vbool(m, "selected"))
+            .map(|m| vstr(m, "id").to_string())
+    });
+
+    if app.model_select.is_none() {
+        let entity = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(Vec::<ModelItem>::new()),
+                None,
+                window,
+                cx,
+            )
+            .searchable(true)
+        });
+        cx.subscribe(
+            &entity,
+            |this, _entity, event: &SelectEvent<SearchableVec<ModelItem>>, _cx| {
+                if let SelectEvent::Confirm(Some(id)) = event {
+                    this.use_local_model(id);
+                }
+            },
+        )
+        .detach();
+        app.model_select = Some(entity);
+    }
+    let entity = app.model_select.clone().unwrap();
+    entity.update(cx, |state, cx| {
+        state.set_items(SearchableVec::new(items), window, cx);
+        if state.selected_value() != current.as_ref() {
+            match &current {
+                Some(id) => state.set_selected_value(id, window, cx),
+                None => state.set_selected_index(None, window, cx),
+            }
+        }
+    });
+
+    el = el.child(
+        card_row(&st, false, "Модель").child(
+            div().flex_none().w(px(180.)).child(
+                Select::new(&entity)
+                    .w_full()
+                    .small()
+                    .placeholder("Выберите модель")
+                    .search_placeholder("Поиск…")
+                    .accessibility_label("Модель"),
+            ),
+        ),
     );
-    // Idle unload: number → minutes, null/0 → "Не выгружать".
+    el = el.child(unload_row(app, cx));
+    el.into_any_element()
+}
+
+/// «Выгрузка модели» row — локальная модель выгружается из памяти после
+/// простоя; `localIdleUnloadMs` в минутах, `None` = никогда. Lives inside
+/// the shared language/model/unload plate now.
+fn unload_row(app: &DictationApp, cx: &mut Context<DictationApp>) -> Div {
+    let state = app.data(Feed::State.slot());
+    let cfg = vget(&state, "config");
     let unload_ms = vnum(cfg, "localIdleUnloadMs");
     let current_min = if unload_ms <= 0.0 {
         None
     } else {
         Some((unload_ms / 60_000.0).round() as u64)
     };
-    let mut unload_row = div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .child(kv("Выгрузка модели", "после простоя"));
+
     let mut opts = div().flex().items_center().gap_1();
     for (label, mins) in [
         ("5 мин", Some(5u64)),
@@ -180,52 +436,6 @@ pub(crate) fn config_card(app: &mut DictationApp, cx: &mut Context<DictationApp>
             )),
         );
     }
-    unload_row = unload_row.child(opts);
-    el = el.child(unload_row);
 
-    if let Some(err) = vopt(&state, "lastError") {
-        el = el.child(kv("Последняя ошибка", err));
-    }
-    el.into_any_element()
-}
-
-/// Segmented-option chip (idle-unload and language selectors) — small
-/// clickable token, highlighted when `selected`.
-pub(crate) fn seg_opt(id: &str, label: &'static str, selected: bool) -> Stateful<Div> {
-    let el = div()
-        .id(SharedString::from(id.to_string()))
-        .px(px(7.))
-        .py(px(2.))
-        .rounded(px(4.))
-        .text_size(px(11.))
-        .cursor_pointer()
-        .child(label);
-    if selected {
-        el.bg(c(ACCENT())).text_color(c(BG()))
-    } else {
-        el.bg(fade(FG(), 0.08))
-            .text_color(fade(FG(), 0.75))
-            .hover(|s| s.bg(fade(FG(), 0.14)))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::language_options;
-
-    /// Chips show human labels but keep wire codes; an unknown config value
-    /// selects nothing, so the selector never silently rewrites it.
-    #[test]
-    fn language_options_label_and_select() {
-        let opts = language_options("en");
-        assert_eq!(
-            opts,
-            [
-                ("ru", "Русский", false),
-                ("en", "English", true),
-                ("auto", "Авто", false),
-            ]
-        );
-        assert!(language_options("fr").iter().all(|(_, _, s)| !s));
-    }
+    card_row(&style(), false, "Выгрузка модели").child(opts)
 }

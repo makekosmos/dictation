@@ -6,13 +6,16 @@
 
 mod app;
 mod assets;
+mod button;
 mod hotkey;
+mod languages;
 mod pill;
 mod pill_wave;
 mod queue;
 mod session;
 mod settings;
 mod status_window;
+mod theme;
 mod view;
 mod worker;
 

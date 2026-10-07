@@ -40,6 +40,10 @@ pub(crate) fn open_status_window(app: &Entity<DictationApp>, cx: &mut App) {
                 appears_transparent: true,
                 traffic_light_position: Some(gpui::point(px(12.), px(14.))),
             }),
+            // Fixed-size utility window: close/minimize stay, maximize is
+            // disabled — the green light greys out on macOS and Windows
+            // drops WS_MAXIMIZEBOX (same flag as the pill window).
+            is_resizable: false,
             ..Default::default()
         },
         move |window, cx| {

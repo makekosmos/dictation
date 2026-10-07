@@ -19,30 +19,32 @@ pub use mundus_gpui_kit::fields::Slot;
 #[derive(Clone, Copy)]
 pub enum Feed {
     State,
-    Local,
-    Models,
     Pending,
     Stats,
+    Models,
+    /// Mundus appearance — dictation always mirrors the Engine theme
+    /// snapshot, independent of the global "follow apps" switch.
+    Appearance,
 }
 
 impl Feed {
     pub const fn slot(self) -> &'static str {
         match self {
             Feed::State => "dictation.state",
-            Feed::Local => "dictation.local",
-            Feed::Models => "dictation.models",
             Feed::Pending => "dictation.pending",
             Feed::Stats => "dictation.stats",
+            Feed::Models => "dictation.models",
+            Feed::Appearance => "appearance",
         }
     }
 
     const fn op(self) -> &'static str {
         match self {
             Feed::State => "dictation.get_state",
-            Feed::Local => "dictation.local_status",
-            Feed::Models => "dictation.list_local_models",
             Feed::Pending => "dictation.list_pending",
             Feed::Stats => "dictation.get_stats",
+            Feed::Models => "dictation.list_local_models",
+            Feed::Appearance => "appearance.get",
         }
     }
 }
@@ -62,6 +64,13 @@ pub struct DictationApp {
     pub error: Option<String>,
     /// Transient success line; cleared on the next action.
     pub notice: Option<String>,
+    /// Last toast-ed values — render pushes a notification only when the
+    /// message actually changes.
+    pub toasted_error: Option<String>,
+    pub toasted_notice: Option<String>,
+    /// «Очередь распознавания» card expanded/collapsed like Manager's
+    /// storage block — collapsed by default.
+    pub queue_open: bool,
 
     /// Dictation pill overlay window while a recording session is active.
     pub pill: Option<WindowHandle<DictationPill>>,
@@ -105,22 +114,24 @@ pub struct DictationApp {
     /// must not close session N+1's pill.
     pub(crate) session: u64,
     /// Destructive action awaiting an inline confirmation in the status
-    /// window (model delete, stats reset, queue purge).
+    /// window (stats reset, queue purge).
     pub confirm: Option<Confirm>,
     /// Queue items with a retry/discard op in flight — their row buttons
     /// stay disabled until the refreshed `dictation.pending` list lands
     /// (or the action errors out), so a double-click can't fire the op
     /// twice.
     pub pending_inflight: std::collections::HashSet<String>,
+    /// Searchable language Select entity — created lazily on the first
+    /// settings render (it needs `&mut Window`), then its committed value
+    /// is re-synced to `config.language` each repaint so external config
+    /// changes show up.
+    pub(crate) lang_select: Option<crate::languages::LangSelect>,
+    pub(crate) model_select: Option<crate::settings::ModelSelect>,
 }
 
 /// Destructive Engine op the status window asks to confirm inline — cheaper
 /// than a modal for this utility window.
 pub enum Confirm {
-    /// `dictation.delete_local_model` for this model id.
-    DeleteModel(String),
-    /// `dictation.reset_stats` — counters are zeroed.
-    ResetStats,
     /// `dictation.discard_all` — queued audio is deleted unrecognised.
     DiscardAll,
 }
@@ -147,6 +158,9 @@ impl DictationApp {
             drain_ticks: 0,
             error: None,
             notice: None,
+            toasted_error: None,
+            toasted_notice: None,
+            queue_open: false,
             pill: None,
             status: None,
             phase: None,
@@ -161,6 +175,8 @@ impl DictationApp {
             session: 0,
             confirm: None,
             pending_inflight: std::collections::HashSet::new(),
+            lang_select: None,
+            model_select: None,
         };
         this.refresh(cx);
         cx.spawn(async move |this, cx| loop {
@@ -181,10 +197,10 @@ impl DictationApp {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         for feed in [
             Feed::State,
-            Feed::Local,
-            Feed::Models,
             Feed::Pending,
             Feed::Stats,
+            Feed::Models,
+            Feed::Appearance,
         ] {
             self.load(feed);
         }
@@ -208,8 +224,14 @@ impl DictationApp {
         self.action("dictation.update_config", patch);
     }
 
-    /// Two-step inline confirm for a destructive action (model delete,
-    /// stats reset, queue purge).
+    /// Select a downloaded local model — `dictation.use_local_model` flips
+    /// provider to `local` and repoints localEngine/modelPath at it.
+    pub fn use_local_model(&mut self, model_id: &str) {
+        self.action("dictation.use_local_model", json!({ "modelId": model_id }));
+    }
+
+    /// Two-step inline confirm for a destructive action (stats reset,
+    /// queue purge).
     pub fn ask_confirm(&mut self, confirm: Confirm) {
         self.confirm = Some(confirm);
     }
@@ -220,6 +242,15 @@ impl DictationApp {
     /// discard of an already-removed uuid would surface a bogus error banner.
     pub fn queue_retry(&mut self, uuid: String) {
         self.queue_op("dictation.retry", uuid);
+    }
+
+    /// Local dismiss for the «Последняя расшифровка» card — the feed is a
+    /// snapshot of the last attempt; clearing the slot hides the card
+    /// without touching Engine state.
+    pub fn dismiss_result(&mut self, cx: &mut Context<Self>) {
+        self.slots
+            .insert("dictation.result".into(), Slot::Ready(Value::Null));
+        cx.notify();
     }
 
     /// See `queue_retry`.
@@ -315,6 +346,13 @@ impl DictationApp {
         // commands once the Engine is back.
         self.drain_ticks += 1;
         if self.drain_ticks.is_multiple_of(66) {
+            // Mundus theme sync — no WS event for appearance changes, so
+            // the same ~2s cadence re-reads the snapshot like manager does.
+            self.call(
+                Feed::Appearance.slot(),
+                Feed::Appearance.op(),
+                serde_json::json!({}),
+            );
             for (slot, (op, params)) in self.ops.clone() {
                 if matches!(self.slots.get(&slot), Some(Slot::Failed(_)) | None) {
                     self.send_rpc(slot, op, params);
@@ -351,6 +389,13 @@ impl DictationApp {
     }
 
     fn handle_reply(&mut self, reply: crate::worker::Reply, cx: &mut Context<Self>) {
+        // EngineError splits at the boundary: Display (kind + raw engine
+        // code) goes to the log, message() is the user-facing Russian text
+        // that lands in the banner, the pill and Slot::Failed (KOS-303).
+        let result = reply.result.map_err(|e| {
+            eprintln!("dictation-gpui: {} failed: {e}", reply.slot);
+            e.message()
+        });
         // Sessioned ops carry `name@session`; replies from a preempted session
         // must not mutate the new session's state. Only dictation.pill slots
         // are tagged — "@action" is a slot name itself.
@@ -370,7 +415,7 @@ impl DictationApp {
             // sidecar, and an errored stale start created nothing to clean.
             // The orphan's own capture.stop already returns Engine to idle.
             if slot == "dictation.pill.start" {
-                if let Some(capture_id) = reply.result.ok().and_then(|v| {
+                if let Some(capture_id) = result.as_ref().ok().and_then(|v| {
                     v.get("captureId")
                         .and_then(Value::as_str)
                         .map(str::to_string)
@@ -385,7 +430,7 @@ impl DictationApp {
             return;
         }
         match slot.as_str() {
-            "dictation.pill.start" => match reply.result {
+            "dictation.pill.start" => match result {
                 Ok(v) => {
                     let capture_id = v
                         .get("captureId")
@@ -417,7 +462,7 @@ impl DictationApp {
                 }
                 Err(e) => self.fail_pill(e, cx),
             },
-            "dictation.pill.stop" => match reply.result {
+            "dictation.pill.stop" => match result {
                 Ok(v) => {
                     // speech.transcribe's reply has no durationMs — carry it
                     // over so the result card shows the record length.
@@ -443,7 +488,7 @@ impl DictationApp {
                 }
                 Err(e) => self.fail_pill(e, cx),
             },
-            "dictation.pill.result" => match reply.result {
+            "dictation.pill.result" => match result {
                 Ok(mut v) => {
                     if v.get("cancelled").and_then(Value::as_bool) == Some(true) {
                         self.end_pill_session(cx);
@@ -468,7 +513,7 @@ impl DictationApp {
                 Err(e) => self.fail_pill(e, cx),
             },
             "dictation.pill.cancel" => {
-                if let Err(e) = reply.result {
+                if let Err(e) = result {
                     self.error = Some(e);
                     cx.notify();
                 }
@@ -477,13 +522,13 @@ impl DictationApp {
                 // Armed: capture_key / capture_cancelled events drive the
                 // rest. A failed arm must clear the flag or the status
                 // window is stuck showing "Нажмите комбинацию…" forever.
-                if let Err(e) = reply.result {
+                if let Err(e) = result {
                     self.hotkey_capturing = false;
                     self.error = Some(e);
                     cx.notify();
                 }
             }
-            "@action" => match reply.result {
+            "@action" => match result {
                 Ok(_) => {
                     // A succeeded write IS the retry succeeding — clear the
                     // persistent banner like the pill.result arm does, or a
@@ -507,7 +552,7 @@ impl DictationApp {
                 let slot = slot.to_string();
                 self.slots.insert(
                     slot.clone(),
-                    match reply.result {
+                    match result {
                         Ok(v) => Slot::Ready(v),
                         Err(e) => Slot::Failed(e),
                     },

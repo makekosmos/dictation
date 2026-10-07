@@ -1,8 +1,9 @@
 use super::{Command, DictationApp, Worker};
 use crate::hotkey::{build_accelerator, vk_to_key_name};
-use crate::session::{should_adopt_capture, state_broadcast_ended};
+use crate::session::{level_to_visual, should_adopt_capture, smooth_level, state_broadcast_ended};
 use crate::worker::Reply;
 use gpui::{AppContext, Entity, TestAppContext};
+use mundus_gpui_kit::engine_error::{EngineError, ErrorKind};
 use serde_json::{json, Value};
 use std::sync::mpsc::{Receiver, Sender};
 
@@ -95,11 +96,9 @@ fn action_success_sets_notice_and_refreshes(cx: &mut TestAppContext) {
             assert!(this.error.is_none());
         })
     });
-    // refresh() re-issued the five data loads.
+    // refresh() re-issued the data loads.
     for op in [
         "dictation.get_state",
-        "dictation.local_status",
-        "dictation.list_local_models",
         "dictation.list_pending",
         "dictation.get_stats",
     ] {
@@ -120,13 +119,16 @@ fn action_failure_sets_error(cx: &mut TestAppContext) {
     replies
         .send(Reply {
             slot: "@action".into(),
-            result: Err("discard: uuid 'u1' не найден".into()),
+            result: Err(EngineError::engine("not-found")),
         })
         .unwrap();
     cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
     cx.update(|cx| {
         app.update(cx, |this, _| {
-            assert_eq!(this.error.as_deref(), Some("discard: uuid 'u1' не найден"));
+            assert_eq!(
+                this.error.as_deref(),
+                Some(EngineError::engine("not-found").message().as_str())
+            );
             assert!(this.notice.is_none());
         })
     });
@@ -228,6 +230,37 @@ fn adoption_skips_ended_capture() {
     assert!(!should_adopt_capture(&std::collections::HashSet::new(), ""));
 }
 
+/// dB mapping for the pill bars: helper sends rms*5, so raw 0.5 = rms 0.1
+/// (−20 dB, loud speech) must read near the top, raw 0.05 (−40 dB, quiet
+/// speech) mid-low, silence/0 → 0.
+#[test]
+fn level_to_visual_db_mapping() {
+    assert_eq!(level_to_visual(0.0), 0.0);
+    assert!(
+        level_to_visual(0.5) >= 0.85,
+        "loud speech {}",
+        level_to_visual(0.5)
+    );
+    let quiet = level_to_visual(0.05);
+    assert!(
+        (0.3..=0.45).contains(&quiet),
+        "quiet speech should sit ~0.375, got {quiet}"
+    );
+    // Top of the meter (raw 1.0 = rms 0.2 = −14 dB) pins at 1.
+    assert_eq!(level_to_visual(1.0), 1.0);
+}
+
+/// Attack/release envelope: onsets jump most of the gap in one frame,
+/// releases decay gently.
+#[test]
+fn smooth_level_attacks_fast_releases_slow() {
+    let attacked = smooth_level(0.0, 1.0);
+    assert!((attacked - 0.8).abs() < 1e-6, "attack step {attacked}");
+    let released = smooth_level(1.0, 0.0);
+    assert!((released - 0.7).abs() < 1e-6, "release step {released}");
+    assert_eq!(smooth_level(0.4, 0.4), 0.4);
+}
+
 /// VK_OEM_PLUS must produce the named accelerator token "Plus" — '+' is
 /// the accelerator delimiter, so "Ctrl++" parses back as a bare "Ctrl"
 /// (the pill footer's own split('+') drops the empty key part too).
@@ -250,6 +283,19 @@ fn accelerator_names_oem_plus() {
             "{accel}"
         );
     }
+}
+
+/// macOS Engine emits a prebuilt `accelerator` string (its keyCode→name
+/// table lives in cortex `macos_native.rs`) — the event carries no `vk`.
+#[test]
+fn accelerator_accepts_macos_payload() {
+    let event = json!({ "event": "dictation_capture_key", "accelerator": "Super+Shift+K" });
+    assert_eq!(build_accelerator(&event).as_deref(), Some("Super+Shift+K"));
+    // Empty accelerator still falls back to the vk path.
+    assert_eq!(
+        build_accelerator(&json!({ "accelerator": "", "vk": 0x4B, "ctrl": true })).as_deref(),
+        Some("Ctrl+K")
+    );
 }
 
 /// A captured key with no usable name must not write a modifier-only
@@ -296,7 +342,7 @@ fn queue_item_in_flight_until_pending_refresh(cx: &mut TestAppContext) {
     replies
         .send(Reply {
             slot: "@action".into(),
-            result: Err("retry: uuid 'u2' не найден".into()),
+            result: Err(EngineError::engine("not-found")),
         })
         .unwrap();
     cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
@@ -323,21 +369,42 @@ fn retry_skips_in_flight_ops(cx: &mut TestAppContext) {
     });
     expect_rpc(&rx, "dictation.get_stats", json!({}));
     // 66+ drain ticks with no reply: the in-flight op must not duplicate.
+    // (The ~2s cadence legitimately re-issues the appearance poll — filter
+    // it out and assert the failed slot alone isn't re-sent.)
     for _ in 0..66 {
         cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
     }
-    assert!(rx.try_recv().is_err(), "in-flight op was re-sent");
+    while let Ok(msg) = rx.try_recv() {
+        if let Command::Rpc { op, .. } = msg {
+            assert_ne!(op, "dictation.get_stats", "in-flight op was re-sent");
+        }
+    }
     // Once the op FAILS the retry does re-issue it (Engine back up).
     replies
         .send(Reply {
             slot: "dictation.stats".into(),
-            result: Err("Engine offline".into()),
+            result: Err(EngineError::local(ErrorKind::NotRunning, "Engine offline")),
         })
         .unwrap();
     for _ in 0..67 {
         cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
     }
-    expect_rpc(&rx, "dictation.get_stats", json!({}));
+    // The cadence tick may legitimately re-send appearance.get first —
+    // pop until the retried stats op shows up.
+    loop {
+        match rx.try_recv() {
+            Ok(Command::Rpc {
+                op: "dictation.get_stats",
+                params,
+                ..
+            }) => {
+                assert_eq!(params, json!({}));
+                break;
+            }
+            Ok(_) => continue,
+            other => panic!("expected retried dictation.get_stats, got {other:?}"),
+        }
+    }
 }
 
 /// `call` on a dead worker channel must not leave the slot in
@@ -378,7 +445,7 @@ fn retry_marks_slot_failed_when_worker_dead(cx: &mut TestAppContext) {
     replies
         .send(Reply {
             slot: "dictation.stats".into(),
-            result: Err("Engine offline".into()),
+            result: Err(EngineError::local(ErrorKind::NotRunning, "Engine offline")),
         })
         .unwrap();
     cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
@@ -550,4 +617,17 @@ fn toggle_stops_recording_and_cancel_orphans_start(cx: &mut TestAppContext) {
         other => panic!("expected orphan DictationStop, got {other:?}"),
     }
     assert!(cx.update(|cx| app.read(cx).phase.is_none()));
+}
+
+/// The models card selects via `dictation.use_local_model` (modelId param),
+/// which Engine itself rejects for non-downloaded models.
+#[gpui::test]
+fn use_local_model_sends_model_id(cx: &mut TestAppContext) {
+    let (app, rx, _replies, _events) = test_app(cx);
+    cx.update(|cx| app.update(cx, |this, _| this.use_local_model("parakeet-ultra")));
+    expect_rpc(
+        &rx,
+        "dictation.use_local_model",
+        json!({ "modelId": "parakeet-ultra" }),
+    );
 }

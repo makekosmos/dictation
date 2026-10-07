@@ -3,14 +3,16 @@
 //! the recognition queue and stats in `queue.rs`. The pill overlay itself
 //! is `pill.rs` — a separate always-on-top window.
 use ::gpui::{prelude::*, *};
+use gpui_component::notification::Notification;
 use gpui_component::scroll::ScrollableElement;
-use serde_json::json;
+use gpui_component::WindowExt;
 
 use crate::app::{DictationApp, Feed};
+use crate::button::btn;
 use crate::pill::PillPhase;
-use mundus_gpui_kit::fields::*;
 use mundus_gpui_kit::theme::*;
 
+#[cfg(test)]
 fn state_label(state: &str) -> &'static str {
     match state {
         "recording" | "capturing" => "Запись",
@@ -22,10 +24,10 @@ fn state_label(state: &str) -> &'static str {
 }
 
 impl Render for DictationApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let state = self.data(Feed::State.slot());
-        let cfg = vget(&state, "config");
-        let hotkey = vstr(cfg, "hotkey");
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Theme mirrors Mundus — re-apply when the Engine snapshot changed.
+        let appearance = self.data(Feed::Appearance.slot());
+        crate::theme::sync_theme(&appearance, window, cx);
 
         let mut col = div()
             .flex_1()
@@ -40,63 +42,40 @@ impl Render for DictationApp {
             .p_4()
             .overflow_y_scrollbar();
 
-        // --- Header ---
-        col = col.child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(c(MUTED_FG()))
-                        .child("Статус движка"),
-                )
-                .child({
-                    let s = vstr(&state, "state");
-                    let color = match s.as_str() {
-                        "recording" | "capturing" | "error" => DESTRUCTIVE(),
-                        "transcribing" | "waiting" => WARN(),
-                        _ => SUCCESS(),
-                    };
-                    badge(state_label(&s), color)
-                }),
-        );
-
-        if let Some(error) = &self.error {
-            col = col.child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(c(DESTRUCTIVE()))
-                    .child(error.clone()),
-            );
+        // Errors and notices go through the shared toast layer — no
+        // persistent banners in the window. Push once per change.
+        if let (Some(error), true) = (
+            self.error.clone(),
+            self.toasted_error.as_ref() != self.error.as_ref(),
+        ) {
+            self.toasted_error = Some(error.clone());
+            window.push_notification(Notification::error(error), cx);
         }
-        if let Some(notice) = &self.notice {
-            col = col.child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(c(SUCCESS()))
-                    .child(notice.clone()),
-            );
+        if self.error.is_none() {
+            self.toasted_error = None;
+        }
+        if let (Some(notice), true) = (
+            self.notice.clone(),
+            self.toasted_notice.as_ref() != self.notice.as_ref(),
+        ) {
+            self.toasted_notice = Some(notice.clone());
+            window.push_notification(Notification::success(notice), cx);
+        }
+        if self.notice.is_none() {
+            self.toasted_notice = None;
         }
 
         // --- Запись ---
         let phase = self.phase;
-        let (label, hint): (&str, &str) = match phase {
-            Some(PillPhase::Starting) => ("Запуск записи…", "Engine открывает захват микрофона"),
-            Some(PillPhase::Recording) => (
-                "Остановить запись",
-                "Идёт запись — pill-окно у нижнего края экрана",
-            ),
-            Some(PillPhase::Processing) => ("Распознаю…", "capture.stop → speech.transcribe"),
-            None => (
-                "Начать запись",
-                "WASAPI-захват на стороне Engine, результат вставляется/копируется по injectMode",
-            ),
+        let label = match phase {
+            Some(PillPhase::Starting) => "Запуск записи…",
+            Some(PillPhase::Recording) => "Остановить запись",
+            Some(PillPhase::Processing) => "Распознаю…",
+            None => "Начать запись",
         };
         let busy = phase.is_some();
-        let mut record = card().child(
-            row("Диктовка", hint)
+        let record = plate().child(
+            label_row("Диктовка")
                 .child(btn("dictation-toggle", label, true, cx, |this, cx| {
                     this.dictation_toggle(cx);
                 }))
@@ -112,271 +91,94 @@ impl Render for DictationApp {
                     ))
                 }),
         );
-        if !hotkey.is_empty() {
-            record = record.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .text_size(px(11.))
-                    .text_color(c(MUTED_FG()))
-                    .child("Горячая клавиша:")
-                    .children(
-                        hotkey
-                            .split('+')
-                            .map(str::trim)
-                            .filter(|p| !p.is_empty())
-                            .map(|p| crate::pill::kbd(p.to_string())),
-                    ),
-            );
-        }
         col = col.child(record);
 
-        // --- Настройки (Engine config mirror + update_config controls) ---
-        col = col.child(crate::settings::config_card(self, cx));
+        // --- Хоткей ---
+        col = col.child(crate::settings::hotkey_card(self, cx));
 
-        // --- Последняя расшифровка ---
-        let result = self.data("dictation.result");
-        if !result.is_null() {
-            let text = vopt(&result, "text").unwrap_or_default();
-            let delivery = vstr(&result, "delivery");
-            let mut card_el = card().child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(c(MUTED_FG()))
-                    .child("Последняя расшифровка"),
-            );
-            if let Some(err) = vopt(&result, "error") {
-                card_el = card_el.child(kv("Ошибка", err));
-            }
-            if !text.is_empty() {
-                card_el = card_el.child(div().text_size(px(13.)).child(text));
-            }
-            let mut meta = Vec::new();
-            if !delivery.is_empty() {
-                meta.push(format!("delivery: {delivery}"));
-            }
-            let ms = vnum(&result, "durationMs");
-            if ms > 0.0 {
-                meta.push(format!("запись {}", fmt_duration(ms)));
-            }
-            if !meta.is_empty() {
-                card_el = card_el.child(
-                    div()
-                        .text_size(px(11.))
-                        .text_color(c(MUTED_FG()))
-                        .child(meta.join(" · ")),
-                );
-            }
-            col = col.child(card_el);
-        }
+        // --- Модель ---
+        col = col.child(crate::settings::language_model_card(self, window, cx));
+
+        // --- Настройки (Engine config mirror + update_config controls) ---
+        col = col.child(crate::settings::config_card(self, window, cx));
 
         // --- Очередь распознавания + статистика ---
-        col = col.child(crate::queue::pending_card(self, cx));
-        col = col.child(crate::queue::stats_card(self, cx));
-
-        // --- Локальные модели ---
-        col = col.child(models_card(self, cx));
+        let latest_result = self.data("dictation.result");
+        col = col.child(crate::queue::pending_card(self, &latest_result, cx));
+        // Статистика собирается пассивно — карточку пока не показываем.
 
         div()
             .size_full()
             .flex()
             .flex_col()
             .bg(c(BG()))
-            .child(titlebar())
+            .child(titlebar(window))
             .child(col)
     }
 }
 
-/// Native-feel titlebar (Agenda pattern): the strip is a
-/// WindowControlArea::Drag region (HTCAPTION → native move/snap), the
-/// trailing controls are platform hitboxes — Windows handles press,
-/// snap flyout and the close button; close destroys the window while
-/// the worker keeps dictation running.
-fn titlebar() -> Div {
+/// Imago settings plaque (r12 soft fg-wash card, no border) — the shared
+/// card chrome for the status window, same component manager uses.
+pub(crate) fn plate() -> Div {
+    imago_gpui::settings::UiStyle::default().card()
+}
+
+/// Label-only row: the kit's `row` minus the muted subtitle line.
+pub(crate) fn label_row(label: impl Into<String>) -> Div {
     div()
-        .h(px(30.))
         .w_full()
-        .flex_none()
+        .min_h_10()
         .flex()
+        .items_center()
+        .gap_3()
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .whitespace_nowrap()
+                .text_size(px(13.))
+                .child(label.into()),
+        )
+}
+
+/// Shared imago chrome titlebar (Agenda/Manager pattern): a
+/// WindowControlArea::Drag region with the left inset clearing the native
+/// macOS traffic lights (reclaimed in fullscreen). Windows gets the kit's
+/// caption hitboxes; macOS draws its own — do not duplicate min/close.
+/// Close destroys the window while the worker keeps dictation running.
+fn titlebar(window: &Window) -> Div {
+    let drag = div()
+        .id("titlebar-drag")
+        .flex_1()
+        .h_full()
+        .window_control_area(WindowControlArea::Drag);
+    imago_gpui::chrome::titlebar()
+        .p_0()
+        .w_full()
         .border_b_1()
         .border_color(fade(FG(), 0.10))
         .child(
             div()
-                .id("titlebar-drag")
-                .flex_1()
-                .h_full()
-                .flex()
-                .items_center()
-                .px_3()
-                .window_control_area(WindowControlArea::Drag)
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(fade(FG(), 0.9))
-                        .child("Mundus Dictation"),
-                ),
-        )
-        .child(caption_btn("–", WindowControlArea::Min, false))
-        .child(caption_btn("×", WindowControlArea::Close, true))
-}
-
-fn models_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
-    let local = app.data(Feed::Local.slot());
-    let models = app.data(Feed::Models.slot());
-    if local.is_null() && models.is_null() {
-        return div().into_any_element();
-    }
-    let mut el = card().child(
-        div()
-            .text_size(px(12.))
-            .text_color(c(MUTED_FG()))
-            .child("Локальная модель (on-device STT)"),
-    );
-    if !local.is_null() {
-        el = el.child(kv(
-            "Движок",
-            format!(
-                "{} · {}",
-                if vbool(&local, "warm") {
-                    "прогрет"
-                } else {
-                    "холодный"
-                },
-                vopt(&local, "backend").unwrap_or_else(|| "—".into())
-            ),
-        ));
-        if let Some(model) = vopt(&local, "loadedModel") {
-            el = el.child(kv("Загружена", model));
-        }
-    }
-    for model in varr(&models, "models").iter().take(10) {
-        let id = vstr(model, "id");
-        let use_id = id.clone();
-        let download_id = id.clone();
-        let ask_id = id.clone();
-        let mut r = row(
-            vstr(model, "name"),
-            format!(
-                "{:.0} МБ{}",
-                vnum(model, "sizeMb"),
-                if vbool(model, "recommended") {
-                    " · рекомендуется"
-                } else {
-                    ""
-                }
-            ),
-        );
-        if vbool(model, "selected") {
-            r = r.child(badge("Выбрана", SUCCESS()));
-        } else if vbool(model, "downloaded") {
-            r = r
-                .child(badge("Скачана", MUTED_FG()))
-                .child(btn_id(
-                    &format!("dict-use-{id}"),
-                    "Использовать",
-                    {
-                        cx.listener(move |this, _, _, cx| {
-                            this.action("dictation.use_local_model", json!({"modelId": use_id}));
-                            cx.notify();
-                        })
+                .w(px(
+                    if cfg!(target_os = "macos") && !window.is_fullscreen() {
+                        88.0
+                    } else {
+                        16.0
                     },
                 ))
-                .child(btn_id(&format!("dict-del-{id}"), "Удалить", {
-                    cx.listener(move |this, _, _, cx| {
-                        this.ask_confirm(crate::app::Confirm::DeleteModel(ask_id.clone()));
-                        cx.notify();
-                    })
-                }));
-        } else {
-            r = r.child(btn_id(&format!("dict-dl-{id}"), "Скачать", {
-                cx.listener(move |this, _, _, cx| {
-                    this.action(
-                        "dictation.download_local_model",
-                        json!({"modelId": download_id, "select": true}),
-                    );
-                    cx.notify();
-                })
-            }));
-        }
-        el = el.child(r);
-    }
-    if let Some(crate::app::Confirm::DeleteModel(delete_id)) = &app.confirm {
-        let id = delete_id.clone();
-        el = el.child(crate::queue::confirm_row(
-            &format!("Удалить {delete_id}?"),
-            "Файлы модели будут удалены с диска",
-            "Удалить",
-            move |this| this.action("dictation.delete_local_model", json!({"modelId": id})),
-            cx,
-        ));
-    }
-    // Live download progress from the WS event slot
-    // (`dictation_local_model_download_progress`, app.rs::handle_engine_event).
-    let download = app.data("dictation.download");
-    if !download.is_null() {
-        let model = vopt(&download, "modelId").unwrap_or_else(|| "модель".into());
-        let percent = vnum(&download, "percent");
-        let text = if percent > 0.0 {
-            format!("{model} — {percent:.0}%")
-        } else {
-            format!("{model}…")
-        };
-        el = el.child(kv("Скачивание", text));
-    }
-    el.into_any_element()
-}
-
-/// Native caption button: the platform hit-tests the WindowControlArea, we
-/// only draw the glyph + hover state (Windows convention 46px wide).
-fn caption_btn(label: &'static str, area: WindowControlArea, danger: bool) -> Stateful<Div> {
-    div()
-        .id(SharedString::from(format!("cap-{area:?}")))
-        .w(px(46.))
-        .h_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_size(px(11.))
-        .text_color(fade(FG(), 0.75))
-        .window_control_area(area)
-        .hover(move |el| {
-            if danger {
-                el.bg(fade(0xe81123, 1.0)).text_color(fade(0xffffff, 1.0))
-            } else {
-                el.bg(fade(FG(), 0.10))
-            }
+                .h_full()
+                .flex_none(),
+        )
+        .child(drag)
+        .when(cfg!(target_os = "macos"), |bar| bar.pr_3())
+        .when(!cfg!(target_os = "macos"), |bar| {
+            bar.child(imago_gpui::chrome::window_controls())
         })
-        .child(label)
-}
-
-/// Recording length for the "Последняя расшифровка" card — m:ss (h:mm:ss
-/// past an hour). `fmt_ms` from the kit formats relative TIMES ("5 мин.
-/// назад"), so applying it to a duration printed "запись 2 мин. назад".
-fn fmt_duration(ms: f64) -> String {
-    let secs = (ms / 1000.0).round().max(0.0) as u64;
-    if secs >= 3600 {
-        format!("{}:{:02}:{:02}", secs / 3600, secs % 3600 / 60, secs % 60)
-    } else {
-        format!("{}:{:02}", secs / 60, secs % 60)
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{fmt_duration, state_label};
-
-    /// A duration is not a relative time: fmt_ms would print "запись 2 мин.
-    /// назад" for a 90s take — the card must show clock-style length.
-    #[test]
-    fn duration_formats_as_clock() {
-        assert_eq!(fmt_duration(1_250.0), "0:01");
-        assert_eq!(fmt_duration(5_000.0), "0:05");
-        assert_eq!(fmt_duration(90_000.0), "1:30");
-        assert_eq!(fmt_duration(3_725_000.0), "1:02:05");
-        assert_eq!(fmt_duration(0.0), "0:00");
-    }
+    use super::state_label;
 
     /// The dotted contract spells the live state "capturing" — it must render
     /// "Запись", not fall through to the green "Готов" badge mid-capture.

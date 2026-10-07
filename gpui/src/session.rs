@@ -6,7 +6,7 @@ use ::gpui::prelude::*;
 use serde_json::{json, Value};
 
 use crate::app::{DictationApp, Feed, Slot, ENGINE_GONE};
-use crate::pill::{PillDelivery, PillPhase};
+use crate::pill::{PillDelivery, PillPhase, PillStyle};
 use crate::worker::Command;
 
 impl DictationApp {
@@ -58,7 +58,12 @@ impl DictationApp {
         // remap every bar slot as the buffer grows ("bars squeeze in").
         self.levels = vec![0.0; 120].into();
         if self.pill.is_none() {
-            self.pill = crate::pill::open(cx.entity(), self.dictation_hotkey(), cx);
+            self.pill = crate::pill::open(
+                cx.entity(),
+                self.dictation_pill_style(),
+                self.dictation_hotkey(),
+                cx,
+            );
         }
         if !matches!(self.slots.get(Feed::State.slot()), Some(Slot::Ready(_))) {
             self.load(Feed::State);
@@ -141,6 +146,18 @@ impl DictationApp {
             .unwrap_or_else(|| "Ctrl+Shift+;".into())
     }
 
+    fn dictation_pill_style(&self) -> PillStyle {
+        match self
+            .data(Feed::State.slot())
+            .get("config")
+            .map(|cfg| mundus_gpui_kit::fields::vstr(cfg, "pillStyle"))
+            .as_deref()
+        {
+            Some("compact") => PillStyle::Compact,
+            _ => PillStyle::Large,
+        }
+    }
+
     /// Push the session snapshot into the pill entity. The pill renders ONLY
     /// its own fields — `cx.open_window` draws synchronously, and that first
     /// draw would re-enter the `DictationApp` update that opened it. A failed
@@ -152,7 +169,12 @@ impl DictationApp {
         // start) leaves `self.pill` empty — without this reopen the CURRENT
         // session records with no overlay at all, not just the next one.
         if self.pill.is_none() && self.phase.is_some() {
-            self.pill = crate::pill::open(cx.entity(), self.dictation_hotkey(), cx);
+            self.pill = crate::pill::open(
+                cx.entity(),
+                self.dictation_pill_style(),
+                self.dictation_hotkey(),
+                cx,
+            );
         }
         let stale = match &self.pill {
             Some(handle) => {
@@ -273,7 +295,11 @@ impl DictationApp {
             // another client (the Manager record button) — the pill shows and
             // the next stop trigger lands on this captureId.
             "dictation_audio_level" => {
-                let level = event.get("level").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                // The helper scales rms*5; map to perceived loudness in dB —
+                // linear RMS of speech is tiny and read as a dead flat line.
+                let level = level_to_visual(
+                    event.get("level").and_then(Value::as_f64).unwrap_or(0.0) as f32,
+                );
                 if self.phase.is_none() {
                     if let Some(capture_id) = event
                         .get("captureId")
@@ -288,24 +314,34 @@ impl DictationApp {
                         self.capture = Some(capture_id);
                         self.capture_adopted = true;
                         if self.pill.is_none() {
-                            self.pill = crate::pill::open(cx.entity(), self.dictation_hotkey(), cx);
+                            self.pill = crate::pill::open(
+                                cx.entity(),
+                                self.dictation_pill_style(),
+                                self.dictation_hotkey(),
+                                cx,
+                            );
                         }
                         self.phase = Some(PillPhase::Recording);
                     }
                 }
                 if self.phase == Some(PillPhase::Recording) {
-                    // AnalyserNode smoothingTimeConstant=0.85 parity —
-                    // bidirectional EMA so bars don't jitter packet to packet.
-                    let level = self
-                        .levels
-                        .back()
-                        .map(|prev| prev * 0.75 + level * 0.25)
-                        .unwrap_or(level)
-                        .clamp(0.0, 1.0);
+                    // Attack/release envelope — bars snap up on speech onset
+                    // and relax on pauses instead of lagging both ways.
+                    let level = smooth_level(self.levels.back().copied().unwrap_or(0.0), level);
                     if self.levels.len() >= 120 {
                         self.levels.pop_front();
                     }
                     self.levels.push_back(level);
+                }
+            }
+            // Double-Esc anywhere cancels the live session (macOS + Windows
+            // watchers emit this while the hotkey monitor is armed).
+            "dictation_escape_cancel" => {
+                if self.phase.is_some() {
+                    self.dictation_cancel(cx);
+                } else {
+                    // В idle двойной Esc — dismiss застрявшего результата.
+                    self.dismiss_result(cx);
                 }
             }
             "dictation_capture_key" if self.hotkey_capturing => {
@@ -337,8 +373,10 @@ impl DictationApp {
                 }
                 self.load(Feed::State);
             }
-            "dictation_config_changed" => {
+            // Selection/model availability changes land on both mirrors.
+            "dictation_config_changed" | "dictation.models_changed" => {
                 self.load(Feed::State);
+                self.load(Feed::Models);
             }
             "dictation_stats_changed" => {
                 self.load(Feed::Stats);
@@ -346,22 +384,25 @@ impl DictationApp {
             "dictation_pending_changed" => {
                 self.load(Feed::Pending);
             }
-            // Progress ticks stream per chunk — stash the payload for the
-            // view rather than re-issuing RPCs; started resets the slot and
-            // complete/failed clear it while refreshing the model list.
-            "dictation_local_model_download_progress"
-            | "dictation_local_model_download_started" => {
-                self.slots
-                    .insert("dictation.download".into(), Slot::Ready(event));
-            }
-            "dictation_local_model_download_complete" | "dictation_local_model_download_failed" => {
-                self.slots.remove("dictation.download");
-                self.load(Feed::Local);
-                self.load(Feed::Models);
-            }
             _ => {}
         }
     }
+}
+
+/// Mic level → visual bar height. The helper sends `rms*5`, so recover
+/// `rms = raw/5` and map to dB: −55 dB → 0, −15 dB → 1. Linear RMS of speech
+/// sits around −60…−25 dB and would otherwise render as a flat minimum bar.
+pub(crate) fn level_to_visual(raw: f32) -> f32 {
+    let rms = (raw / 5.0).max(1e-6);
+    let db = 20.0 * rms.log10();
+    ((db + 55.0) / 40.0).clamp(0.0, 1.0)
+}
+
+/// Attack/release envelope: fast attack so onsets snap up, slower release so
+/// pauses relax instead of chattering packet to packet.
+pub(crate) fn smooth_level(prev: f32, new: f32) -> f32 {
+    let k = if new > prev { 0.8 } else { 0.3 };
+    (prev + (new - prev) * k).clamp(0.0, 1.0)
 }
 
 /// Does a `dictation_state_changed` / `dictation.state_changed` broadcast mean

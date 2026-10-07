@@ -7,8 +7,17 @@ use std::borrow::Cow;
 
 pub struct Assets;
 
-const LOCAL_ICONS: &[(&str, &[u8])] =
-    &[("icons/mic.svg", include_bytes!("../assets/icons/mic.svg"))];
+const LOCAL_ICONS: &[(&str, &[u8])] = &[
+    ("icons/mic.svg", include_bytes!("../assets/icons/mic.svg")),
+    (
+        "icons/chevron-down.svg",
+        include_bytes!("../assets/icons/chevron-down.svg"),
+    ),
+    (
+        "icons/chevron-up.svg",
+        include_bytes!("../assets/icons/chevron-up.svg"),
+    ),
+];
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
