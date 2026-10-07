@@ -236,7 +236,20 @@ export function packageTarget(target) {
     target.includes("windows") ? `${APP}.exe` : APP,
   );
   if (target.includes("windows")) {
-    checked("zip", ["-j", "-q", path.join(dist, `${name}.zip`), binary]);
+    const archive = path.join(dist, `${name}.zip`);
+    if (process.platform === "win32") {
+      // Windows runners ship no `zip` binary; PowerShell's Compress-Archive is always there.
+      const quote = (value) => `'${value.replaceAll("'", "''")}'`;
+      fs.rmSync(archive, { force: true });
+      checked("powershell", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `$ErrorActionPreference = 'Stop'; Compress-Archive -LiteralPath ${quote(binary)} -DestinationPath ${quote(archive)} -Force`,
+      ]);
+    } else {
+      checked("zip", ["-j", "-q", archive, binary]);
+    }
   } else if (target.includes("apple")) {
     const app = path.join(dist, `${BUNDLE}.app`);
     const contents = path.join(app, "Contents");
