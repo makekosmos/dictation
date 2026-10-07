@@ -1,6 +1,6 @@
 use super::{Command, DictationApp, Worker};
 use crate::hotkey::{build_accelerator, vk_to_key_name};
-use crate::session::{should_adopt_capture, state_broadcast_ended};
+use crate::session::{level_to_visual, should_adopt_capture, smooth_level, state_broadcast_ended};
 use crate::worker::Reply;
 use gpui::{AppContext, Entity, TestAppContext};
 use mundus_gpui_kit::engine_error::{EngineError, ErrorKind};
@@ -228,6 +228,37 @@ fn adoption_skips_ended_capture() {
     // A malformed event with an empty captureId would adopt a session we
     // could never stop (stop needs the id) — reject it.
     assert!(!should_adopt_capture(&std::collections::HashSet::new(), ""));
+}
+
+/// dB mapping for the pill bars: helper sends rms*5, so raw 0.5 = rms 0.1
+/// (−20 dB, loud speech) must read near the top, raw 0.05 (−40 dB, quiet
+/// speech) mid-low, silence/0 → 0.
+#[test]
+fn level_to_visual_db_mapping() {
+    assert_eq!(level_to_visual(0.0), 0.0);
+    assert!(
+        level_to_visual(0.5) >= 0.85,
+        "loud speech {}",
+        level_to_visual(0.5)
+    );
+    let quiet = level_to_visual(0.05);
+    assert!(
+        (0.3..=0.45).contains(&quiet),
+        "quiet speech should sit ~0.375, got {quiet}"
+    );
+    // Top of the meter (raw 1.0 = rms 0.2 = −14 dB) pins at 1.
+    assert_eq!(level_to_visual(1.0), 1.0);
+}
+
+/// Attack/release envelope: onsets jump most of the gap in one frame,
+/// releases decay gently.
+#[test]
+fn smooth_level_attacks_fast_releases_slow() {
+    let attacked = smooth_level(0.0, 1.0);
+    assert!((attacked - 0.8).abs() < 1e-6, "attack step {attacked}");
+    let released = smooth_level(1.0, 0.0);
+    assert!((released - 0.7).abs() < 1e-6, "release step {released}");
+    assert_eq!(smooth_level(0.4, 0.4), 0.4);
 }
 
 /// VK_OEM_PLUS must produce the named accelerator token "Plus" — '+' is

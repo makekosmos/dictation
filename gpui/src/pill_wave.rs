@@ -36,6 +36,51 @@ fn sample_value(values: &[f32], index: usize, count: usize) -> f32 {
     values.get(src).copied().unwrap_or(0.0).clamp(0.0, 1.0)
 }
 
+/// Instant equalizer shape: every bar follows the LATEST level scaled by a
+/// mild center-weighted envelope, plus a per-bar deterministic wobble so the
+/// row doesn't move in lockstep. `time` is the pill's animation clock
+/// (seconds). At level 0 all bars stay at 0 (paint clamps to min height).
+pub fn live_bars(level: f32, time: f32, count: usize) -> Vec<f32> {
+    let half = (count / 2) as f32;
+    (0..count)
+        .map(|i| {
+            let pos = ((i as f32) - half) / half.max(1.0);
+            let envelope = 1.0 - pos.abs() * 0.35;
+            // Per-bar phase/frequency split keeps neighbours out of sync.
+            let wobble = (time * 6.0 + i as f32 * 1.7).sin() * 0.5 + 0.5;
+            (level * envelope * (0.65 + 0.35 * wobble)).clamp(0.0, 1.0)
+        })
+        .collect()
+}
+
+/// Compact-pill processing indicator: a symmetric pulse travels from the
+/// center bars out to both edges, then collapses back to center — one
+/// deterministic loop, no history blend. `CONVERGE_PERIOD` is in the pill's
+/// `processing_time` units (ticker adds 0.05 per ~16ms frame ⇒ ~0.9s cycle).
+const CONVERGE_PERIOD: f32 = 2.8;
+
+pub fn converge_bars(time: f32, count: usize) -> Vec<f32> {
+    if count == 0 {
+        return Vec::new();
+    }
+    let phase = (time / CONVERGE_PERIOD).rem_euclid(1.0);
+    // Wavefront: 0 = center, 1 = edges, then back to center.
+    let front = if phase < 0.5 {
+        phase * 2.0
+    } else {
+        2.0 - phase * 2.0
+    };
+    let center = (count - 1) as f32 / 2.0;
+    let norm = center.max(1.0);
+    (0..count)
+        .map(|i| {
+            let d = ((i as f32) - center).abs() / norm;
+            let pulse = (1.0 - (d - front).abs() / 0.45).max(0.0);
+            (0.15 + 0.85 * pulse * pulse).clamp(0.0, 1.0)
+        })
+        .collect()
+}
+
 /// `nextProcessingBars` parity — three sine/cosine voices over a center-weight
 /// envelope, blended out of the last live waveform.
 pub fn processing_bars(time: f32, last_active: &[f32], blend: f32, count: usize) -> Vec<f32> {
@@ -55,8 +100,8 @@ pub fn processing_bars(time: f32, last_active: &[f32], blend: f32, count: usize)
 }
 
 /// `drawWaveformCanvas` parity — rounded 3px bars, alpha by level, edge fade,
-/// dashed center line when idle.
-pub fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: u32, window: &mut Window) {
+/// dashed center line when idle. `time` drives the live-wave wobble.
+pub fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: u32, time: f32, window: &mut Window) {
     let w = f32::from(bounds.size.width);
     let h = f32::from(bounds.size.height);
     if w <= 0.0 || h <= 0.0 {
@@ -89,9 +134,10 @@ pub fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: u32, window: &mut 
                 bar_count as f32 * WAVE_BAR_W + (bar_count.saturating_sub(1)) as f32 * WAVE_BAR_GAP;
             let start_x = bounds.origin.x + px((w - total) / 2.);
             let mut bars: Vec<f32> = match wave {
-                Wave::Live(values) => (0..bar_count)
-                    .map(|i| sample_value(values, i, bar_count))
-                    .collect(),
+                Wave::Live(values) => {
+                    let level = values.last().copied().unwrap_or(0.0);
+                    live_bars(level, time, bar_count)
+                }
                 Wave::Processing {
                     time,
                     last_active,
@@ -110,7 +156,8 @@ pub fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: u32, window: &mut 
             }
             for (i, value) in bars.iter().enumerate() {
                 let x = start_x + px(i as f32 * step);
-                let bar_h = (value * h * WAVE_SENSITIVITY).max(WAVE_BAR_MIN_H).min(h);
+                let amp = value.powf(0.65);
+                let bar_h = (amp * h * WAVE_SENSITIVITY).max(WAVE_BAR_MIN_H).min(h);
                 // destination-out edge fade ≈ per-bar alpha ramp near edges.
                 let left_f = ((x - bounds.origin.x) / px(WAVE_FADE_PX)).clamp(0.0, 1.0);
                 let right_f = ((bounds.origin.x + px(w) - x) / px(WAVE_FADE_PX)).clamp(0.0, 1.0);
@@ -127,5 +174,91 @@ pub fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: u32, window: &mut 
                 );
             }
         }
+    }
+}
+
+/// Compact pill bars — caller passes the final per-bar heights (0..1):
+/// `live_bars` while recording, `converge_bars` while processing.
+pub fn paint_compact_wave(bounds: Bounds<Pixels>, bars: &[f32], color: u32, window: &mut Window) {
+    const BAR_W: f32 = 3.5;
+    const GAP: f32 = 3.;
+    let w = f32::from(bounds.size.width);
+    let h = f32::from(bounds.size.height);
+    if w <= 0.0 || h <= 0.0 || bars.is_empty() {
+        return;
+    }
+    let count = bars.len();
+    let total = count as f32 * BAR_W + (count.saturating_sub(1)) as f32 * GAP;
+    let start_x = bounds.origin.x + px((w - total) / 2.);
+    let center_y = bounds.origin.y + px(h / 2.);
+    for (i, value) in bars.iter().enumerate() {
+        // dB mapping in session.rs already compresses loudness — linear here.
+        let bar_h = (value.clamp(0.0, 1.0) * h).max(2.).min(h);
+        let x = start_x + px(i as f32 * (BAR_W + GAP));
+        window.paint_quad(
+            fill(
+                Bounds::from_corners(
+                    point(x, center_y - px(bar_h / 2.)),
+                    point(x + px(BAR_W), center_y + px(bar_h / 2.)),
+                ),
+                rgb(color),
+            )
+            .corner_radii(px((BAR_W / 2.).min(bar_h / 2.))),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{converge_bars, live_bars, CONVERGE_PERIOD};
+
+    #[test]
+    fn live_bars_center_weighted() {
+        let bars = live_bars(1.0, 0.0, 6);
+        assert_eq!(bars.len(), 6);
+        assert!(bars.iter().all(|b| *b <= 1.0));
+        // Silence stays flat — min-height paint clamp handles the floor.
+        assert_eq!(live_bars(0.0, 3.7, 6), vec![0.0; 6]);
+        // Center-weighted on average over the wobble period.
+        let mut center = 0.0f32;
+        let mut edge = 0.0f32;
+        for t in [0.0, 0.3, 0.7, 1.1, 1.6, 2.2] {
+            let b = live_bars(1.0, t, 6);
+            center += b[2] + b[3];
+            edge += b[0] + b[5];
+        }
+        assert!(
+            center > edge,
+            "center bars must exceed edge bars on average"
+        );
+    }
+
+    #[test]
+    fn converge_bars_is_symmetric() {
+        for time in [0.0, 0.4, 0.7, 1.4, 2.1, 5.9] {
+            let bars = converge_bars(time, 6);
+            for i in 0..3 {
+                assert!(
+                    (bars[i] - bars[5 - i]).abs() < 1e-6,
+                    "bars[{i}]={} must mirror bars[{}]={} at t={time}",
+                    bars[i],
+                    5 - i,
+                    bars[5 - i]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn converge_bars_pulses_center_then_edges() {
+        // Phase 0: wavefront at center → center bars exceed edge bars.
+        let start = converge_bars(0.0, 6);
+        assert!(start[2] > start[0] && start[3] > start[5]);
+        // Half phase: wavefront at edges → edge bars exceed center bars.
+        let half = converge_bars(CONVERGE_PERIOD / 2.0, 6);
+        assert!(half[0] > half[2] && half[5] > half[3]);
+        // Full period returns to the center-pulse shape.
+        let again = converge_bars(CONVERGE_PERIOD, 6);
+        assert!(again[2] > again[0]);
     }
 }

@@ -8,7 +8,7 @@
 use ::gpui::{prelude::*, *};
 
 use crate::app::DictationApp;
-use crate::pill_wave::{paint_wave, Wave};
+use crate::pill_wave::{converge_bars, live_bars, paint_compact_wave, paint_wave, Wave};
 use mundus_gpui_kit::theme::*;
 
 /// Vue pill body is 380x126 (`dictation-pill.ts` PILL_WIDTH/PILL_HEIGHT).
@@ -16,7 +16,17 @@ pub(crate) const PILL_W: f32 = 380.;
 pub(crate) const PILL_H: f32 = 126.;
 /// Bottom-center of the work area, like the Electron pill.
 pub(crate) const BOTTOM_MARGIN: f32 = 100.;
+pub(crate) const COMPACT_PILL_W: f32 = 72.;
+pub(crate) const COMPACT_PILL_H: f32 = 32.;
+pub(crate) const COMPACT_BOTTOM_MARGIN: f32 = 60.;
 const FOOTER_H: f32 = 34.;
+
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum PillStyle {
+    #[default]
+    Large,
+    Compact,
+}
 
 // Fixed Vue palette (dictation-pill-waveform.ts / DictationPillView.vue CSS).
 pub const WAVE_RECORDING: u32 = 0x71717a; // zinc-500
@@ -118,20 +128,25 @@ pub fn hint_button(
 /// fall back to the in-view status instead of crashing the app.
 pub fn open(
     manager: Entity<DictationApp>,
+    style: PillStyle,
     hotkey: String,
     cx: &mut App,
 ) -> Option<WindowHandle<DictationPill>> {
     let display = cx.primary_display()?;
     let area = display.visible_bounds();
+    let (width, height, margin) = match style {
+        PillStyle::Large => (PILL_W, PILL_H, BOTTOM_MARGIN),
+        PillStyle::Compact => (COMPACT_PILL_W, COMPACT_PILL_H, COMPACT_BOTTOM_MARGIN),
+    };
     let origin = point(
-        area.center().x - px(PILL_W / 2.),
-        area.origin.y + area.size.height - px(PILL_H + BOTTOM_MARGIN),
+        area.center().x - px(width / 2.),
+        area.origin.y + area.size.height - px(height + margin),
     );
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
                 origin,
-                size: size(px(PILL_W), px(PILL_H)),
+                size: size(px(width), px(height)),
             })),
             titlebar: None,
             focus: false,
@@ -143,7 +158,9 @@ pub fn open(
             window_background: WindowBackgroundAppearance::Transparent,
             ..Default::default()
         },
-        move |_, cx| cx.new(|cx| DictationPill::new(manager, PillPhase::Starting, hotkey, cx)),
+        move |_, cx| {
+            cx.new(|cx| DictationPill::new(manager, style, PillPhase::Starting, hotkey, cx))
+        },
     )
     .ok()
 }
@@ -154,6 +171,7 @@ pub struct DictationPill {
     /// (re-entrant read → "already being updated" panic). State is a
     /// snapshot pushed by `DictationApp::push_pill`.
     manager: Entity<DictationApp>,
+    style: PillStyle,
     phase: PillPhase,
     delivery: Option<PillDelivery>,
     /// Ring buffer of the last 120 RMS samples pushed by the owner.
@@ -179,6 +197,7 @@ pub struct DictationPill {
 impl DictationPill {
     pub(crate) fn new(
         manager: Entity<DictationApp>,
+        style: PillStyle,
         phase: PillPhase,
         hotkey: String,
         cx: &mut Context<Self>,
@@ -197,8 +216,10 @@ impl DictationPill {
                 // Enter animation + live waveform both repaint at tick rate;
                 // processing additionally advances its synthetic wave clock.
                 if this.phase == PillPhase::Recording {
+                    // Fast easing — must not eat the attack applied upstream
+                    // in session.rs (0.8) or the bars lag the voice again.
                     for (d, t) in this.display.iter_mut().zip(this.levels.iter()) {
-                        *d += (t - *d) * 0.35;
+                        *d += (t - *d) * 0.6;
                     }
                 }
                 if entering || processing || this.phase == PillPhase::Recording {
@@ -211,6 +232,7 @@ impl DictationPill {
         });
         Self {
             manager,
+            style,
             phase,
             delivery: None,
             levels: Vec::new(),
@@ -252,9 +274,10 @@ impl DictationPill {
     }
 }
 
-impl Render for DictationPill {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl DictationPill {
+    fn render_large(&mut self, cx: &mut Context<Self>) -> Div {
         let (phase, delivery, hotkey) = (self.phase, self.delivery, self.hotkey.clone());
+        let wave_time = self.enter_at.elapsed().as_secs_f32();
         let recording = phase == PillPhase::Recording;
 
         let (wave, wave_color) = match delivery {
@@ -322,7 +345,7 @@ impl Render for DictationPill {
                         canvas(
                             move |_, _, _| (wave, wave_color),
                             move |bounds, (wave, color), window, _| {
-                                paint_wave(bounds, &wave, color, window);
+                                paint_wave(bounds, &wave, color, wave_time, window);
                             },
                         )
                         .size_full(),
@@ -406,24 +429,68 @@ impl Render for DictationPill {
                     ),
             );
 
-        // Wrapper centers the animated body so the grow/shrink scales from
-        // the middle, like CSS `transform: scale()` on the Vue root. The
-        // eased progress is clocked by `enter_at` — the ticker notifies at
-        // ~60fps during the first 320ms.
+        let enter_t = (wave_time / 0.26).min(1.0);
+        let eased = cubic_bezier(enter_t, 0.2, 0.7, 0.2, 1.4);
+        pill_body.opacity(eased)
+    }
+
+    fn render_compact(&mut self) -> Div {
+        // Compact bars are final 0..1 heights: live RMS envelope while
+        // recording, deterministic converge/diverge pulse while processing.
+        let values = match self.delivery {
+            Some(_) => vec![0.0; 6],
+            None => match self.phase {
+                PillPhase::Starting => vec![0.0; 6],
+                PillPhase::Recording => live_bars(
+                    self.display.last().copied().unwrap_or(0.0),
+                    self.enter_at.elapsed().as_secs_f32(),
+                    6,
+                ),
+                PillPhase::Processing => converge_bars(self.processing_time, 6),
+            },
+        };
+        // Bars colour-state: amber while the transcript is being inserted,
+        // teal on success, red on failure, white while recording.
+        let bar_color = match self.delivery {
+            Some(d) => d.dot_color(),
+            None => match self.phase {
+                PillPhase::Processing => WAVE_WAITING,
+                _ => 0xffffff,
+            },
+        };
         let enter_t = (self.enter_at.elapsed().as_secs_f32() / 0.26).min(1.0);
         let eased = cubic_bezier(enter_t, 0.2, 0.7, 0.2, 1.4);
-        let scale = 0.96 + 0.04 * eased;
         div()
-            .size_full()
+            .w(px(COMPACT_PILL_W))
+            .h(px(COMPACT_PILL_H))
+            .rounded_full()
+            .border_1()
+            .border_color(fade(FG(), 0.18))
+            .bg(rgb(0x000000))
             .flex()
             .items_center()
             .justify_center()
+            .overflow_hidden()
+            .opacity(eased)
             .child(
-                pill_body
-                    .w(px(PILL_W * scale))
-                    .h(px(PILL_H * scale))
-                    .opacity(eased),
+                canvas(
+                    move |_, _, _| values,
+                    move |bounds, values, window, _| {
+                        paint_compact_wave(bounds, &values, bar_color, window);
+                    },
+                )
+                .w(px(44.))
+                .h(px(20.)),
             )
+    }
+}
+
+impl Render for DictationPill {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        match self.style {
+            PillStyle::Large => self.render_large(cx),
+            PillStyle::Compact => self.render_compact(),
+        }
     }
 }
 

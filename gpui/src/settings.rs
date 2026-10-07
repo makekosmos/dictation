@@ -108,7 +108,35 @@ pub(crate) fn config_card(
             vbool(cfg, "duckAudioDuringRecording"),
             |on| json!({ "duckAudioDuringRecording": on }),
             cx,
-        ));
+        ))
+        .child(
+            card_row(&st, false, "Вид панели").child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        seg_opt(
+                            "pill-style-large",
+                            "Большой",
+                            vstr(cfg, "pillStyle") != "compact",
+                        )
+                        .on_click(cx.listener(|this, _, _, _| {
+                            this.update_config(json!({ "pillStyle": "large" }));
+                        })),
+                    )
+                    .child(
+                        seg_opt(
+                            "pill-style-compact",
+                            "Мини",
+                            vstr(cfg, "pillStyle") == "compact",
+                        )
+                        .on_click(cx.listener(|this, _, _, _| {
+                            this.update_config(json!({ "pillStyle": "compact" }));
+                        })),
+                    ),
+            ),
+        );
     // --- Read-only mirror ------------------------------------------------
 
     if let Some(err) = vopt(&state, "lastError") {
