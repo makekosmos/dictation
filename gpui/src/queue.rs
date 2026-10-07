@@ -3,7 +3,7 @@
 //! collected by the Engine passively; the card is hidden for now.
 use ::gpui::{prelude::*, *};
 use chrono::{Datelike, Timelike};
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::app::{Confirm, DictationApp, Feed};
 use crate::button::{btn, btn_id};
@@ -84,15 +84,30 @@ pub(crate) fn confirm_row(
         ))
 }
 
+/// Recording length — m:ss (h:mm:ss past an hour).
+fn fmt_duration(ms: f64) -> String {
+    let secs = (ms / 1000.0).round().max(0.0) as u64;
+    if secs >= 3600 {
+        format!("{}:{:02}:{:02}", secs / 3600, secs % 3600 / 60, secs % 60)
+    } else {
+        format!("{}:{:02}", secs / 60, secs % 60)
+    }
+}
+
 /// Pending/failed recordings kept on disk after a network or key failure —
 /// per-item retry/discard plus bulk actions
 /// (`dictation.retry_all`/`discard_all`). Every item renders: the bulk
 /// actions cover the whole queue, so silently truncating the list would lie
 /// about what they affect.
-pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
+pub(crate) fn pending_card(
+    app: &mut DictationApp,
+    latest_result: &Value,
+    cx: &mut Context<DictationApp>,
+) -> AnyElement {
     slot_or(app, Feed::Pending.slot(), |v| {
         let items = varr(v, "items");
         let open = app.queue_open;
+        let has_result = !latest_result.is_null();
         let header = div()
             .id("dict-queue-toggle")
             .w_full()
@@ -118,17 +133,22 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
                     .child(format!("{}", items.len())),
             )
             .child(
-                gpui_component::Icon::default()
-                    .path(if open {
-                        "icons/chevron-up.svg"
-                    } else {
-                        "icons/chevron-down.svg"
-                    })
-                    .size(px(16.))
-                    .text_color(c(MUTED_FG())),
+                div()
+                    .rounded(px(4.))
+                    .p(px(2.))
+                    .hover(|s| s.bg(fade(FG(), 0.08)))
+                    .child(
+                        gpui_component::Icon::default()
+                            .path(if open {
+                                "icons/chevron-up.svg"
+                            } else {
+                                "icons/chevron-down.svg"
+                            })
+                            .size(px(16.))
+                            .text_color(c(MUTED_FG())),
+                    ),
             )
             .cursor_pointer()
-            .hover(|style| style.bg(fade(FG(), 0.05)))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.queue_open = !this.queue_open;
                 cx.notify();
@@ -145,10 +165,58 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
                 .border_t_1()
                 .border_color(fade(BORDER(), 0.6)),
         );
-        if items.is_empty() {
+        let mut first_row = true;
+        if has_result {
+            let text = vopt(latest_result, "text").unwrap_or_default();
+            let delivery = vstr(latest_result, "delivery");
+            let mut meta = Vec::new();
+            if !delivery.is_empty() {
+                meta.push(format!("delivery: {delivery}"));
+            }
+            let ms = vnum(latest_result, "durationMs");
+            if ms > 0.0 {
+                meta.push(format!("запись {}", fmt_duration(ms)));
+            }
+            let sub = if text.is_empty() {
+                meta.join(" · ")
+            } else {
+                let preview: String = text.chars().take(80).collect();
+                let preview = if text.chars().count() > 80 {
+                    format!("{preview}…")
+                } else {
+                    preview
+                };
+                if meta.is_empty() {
+                    preview
+                } else {
+                    format!("{} · {preview}", meta.join(" · "))
+                }
+            };
+            let mut result_row = imago_gpui::settings::UiStyle::default()
+                .card_row(true)
+                .child(row("Последняя", sub));
+            if let Some(err) = vopt(latest_result, "error") {
+                result_row = result_row.child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(c(MUTED_FG()))
+                        .child(format!("Ошибка: {err}")),
+                );
+            }
+            result_row = result_row.child(btn(
+                "dict-dismiss-result",
+                "Скрыть",
+                false,
+                cx,
+                |this, cx| this.dismiss_result(cx),
+            ));
+            el = el.child(result_row);
+            first_row = false;
+        }
+        if items.is_empty() && !has_result {
             el = el.child(
                 imago_gpui::settings::UiStyle::default()
-                    .card_row(false)
+                    .card_row(first_row)
                     .child(empty("Очередь пуста")),
             );
         }
@@ -168,49 +236,53 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
                 let sub = format!("{:.0} сек. · {preview}", vnum(item, "durationSec"));
                 el = el.child(
                     imago_gpui::settings::UiStyle::default()
-                        .card_row(false)
+                        .card_row(first_row)
                         .child(row(title, sub)),
                 );
+                first_row = false;
                 continue;
             }
             let in_flight = app.pending_inflight.contains(&uuid);
             let retry_uuid = uuid.clone();
             let discard_uuid = uuid.clone();
             el = el.child(
-                div().px(px(16.)).child(
-                    row(
-                        pending_title(&vstr(item, "createdAt")),
-                        // lastError arrives as the Engine's own message — the app
-                        // shows Engine errors verbatim elsewhere too.
-                        format!(
-                            "{:.0} сек. · попыток: {:.0}{}",
-                            vnum(item, "durationSec"),
-                            vnum(item, "attempts"),
-                            vopt(item, "lastError")
-                                .map(|e| format!(" · {e}"))
-                                .unwrap_or_default()
+                imago_gpui::settings::UiStyle::default()
+                    .card_row(first_row)
+                    .child(
+                        row(
+                            pending_title(&vstr(item, "createdAt")),
+                            // lastError arrives as the Engine's own message — the app
+                            // shows Engine errors verbatim elsewhere too.
+                            format!(
+                                "{:.0} сек. · попыток: {:.0}{}",
+                                vnum(item, "durationSec"),
+                                vnum(item, "attempts"),
+                                vopt(item, "lastError")
+                                    .map(|e| format!(" · {e}"))
+                                    .unwrap_or_default()
+                            ),
+                        )
+                        .child(
+                            btn_id(&format!("dict-retry-{uuid}"), "Повторить", {
+                                cx.listener(move |this, _, _, cx| {
+                                    this.queue_retry(retry_uuid.clone());
+                                    cx.notify();
+                                })
+                            })
+                            .disabled(in_flight),
+                        )
+                        .child(
+                            btn_id(&format!("dict-discard-{uuid}"), "Удалить", {
+                                cx.listener(move |this, _, _, cx| {
+                                    this.queue_discard(discard_uuid.clone());
+                                    cx.notify();
+                                })
+                            })
+                            .disabled(in_flight),
                         ),
-                    )
-                    .child(
-                        btn_id(&format!("dict-retry-{uuid}"), "Повторить", {
-                            cx.listener(move |this, _, _, cx| {
-                                this.queue_retry(retry_uuid.clone());
-                                cx.notify();
-                            })
-                        })
-                        .disabled(in_flight),
-                    )
-                    .child(
-                        btn_id(&format!("dict-discard-{uuid}"), "Удалить", {
-                            cx.listener(move |this, _, _, cx| {
-                                this.queue_discard(discard_uuid.clone());
-                                cx.notify();
-                            })
-                        })
-                        .disabled(in_flight),
                     ),
-                ),
             );
+            first_row = false;
         }
         let any_pending = items.iter().any(|i| vstr(i, "status") != "delivered");
         if !items.is_empty() {
@@ -256,7 +328,18 @@ pub(crate) fn pending_card(app: &mut DictationApp, cx: &mut Context<DictationApp
 
 #[cfg(test)]
 mod tests {
-    use super::{format_day_time, pending_title};
+    use super::{fmt_duration, format_day_time, pending_title};
+
+    /// A duration is not a relative time: fmt_ms would print "запись 2 мин.
+    /// назад" for a 90s take — the card must show clock-style length.
+    #[test]
+    fn duration_formats_as_clock() {
+        assert_eq!(fmt_duration(1_250.0), "0:01");
+        assert_eq!(fmt_duration(5_000.0), "0:05");
+        assert_eq!(fmt_duration(90_000.0), "1:30");
+        assert_eq!(fmt_duration(3_725_000.0), "1:02:05");
+        assert_eq!(fmt_duration(0.0), "0:00");
+    }
     use chrono::{DateTime, Datelike, Timelike};
 
     /// Queue rows render a local «день месяц, чч:мм» — parse must convert to

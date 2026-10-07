@@ -10,7 +10,6 @@ use gpui_component::WindowExt;
 use crate::app::{DictationApp, Feed};
 use crate::button::btn;
 use crate::pill::PillPhase;
-use mundus_gpui_kit::fields::*;
 use mundus_gpui_kit::theme::*;
 
 #[cfg(test)]
@@ -103,46 +102,9 @@ impl Render for DictationApp {
         // --- Настройки (Engine config mirror + update_config controls) ---
         col = col.child(crate::settings::config_card(self, window, cx));
 
-        // --- Последняя расшифровка ---
-        let result = self.data("dictation.result");
-        if !result.is_null() {
-            let text = vopt(&result, "text").unwrap_or_default();
-            let delivery = vstr(&result, "delivery");
-            let mut card_el =
-                plate().child(crate::view::label_row("Последняя расшифровка").child(btn(
-                    "dict-dismiss-result",
-                    "Скрыть",
-                    false,
-                    cx,
-                    |this, cx| this.dismiss_result(cx),
-                )));
-            if let Some(err) = vopt(&result, "error") {
-                card_el = card_el.child(kv("Ошибка", err));
-            }
-            if !text.is_empty() {
-                card_el = card_el.child(div().text_size(px(13.)).child(text));
-            }
-            let mut meta = Vec::new();
-            if !delivery.is_empty() {
-                meta.push(format!("delivery: {delivery}"));
-            }
-            let ms = vnum(&result, "durationMs");
-            if ms > 0.0 {
-                meta.push(format!("запись {}", fmt_duration(ms)));
-            }
-            if !meta.is_empty() {
-                card_el = card_el.child(
-                    div()
-                        .text_size(px(11.))
-                        .text_color(c(MUTED_FG()))
-                        .child(meta.join(" · ")),
-                );
-            }
-            col = col.child(card_el);
-        }
-
         // --- Очередь распознавания + статистика ---
-        col = col.child(crate::queue::pending_card(self, cx));
+        let latest_result = self.data("dictation.result");
+        col = col.child(crate::queue::pending_card(self, &latest_result, cx));
         // Статистика собирается пассивно — карточку пока не показываем.
 
         div()
@@ -214,32 +176,9 @@ fn titlebar(window: &Window) -> Div {
         })
 }
 
-/// Recording length for the "Последняя расшифровка" card — m:ss (h:mm:ss
-/// past an hour). `fmt_ms` from the kit formats relative TIMES ("5 мин.
-/// назад"), so applying it to a duration printed "запись 2 мин. назад".
-fn fmt_duration(ms: f64) -> String {
-    let secs = (ms / 1000.0).round().max(0.0) as u64;
-    if secs >= 3600 {
-        format!("{}:{:02}:{:02}", secs / 3600, secs % 3600 / 60, secs % 60)
-    } else {
-        format!("{}:{:02}", secs / 60, secs % 60)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{fmt_duration, state_label};
-
-    /// A duration is not a relative time: fmt_ms would print "запись 2 мин.
-    /// назад" for a 90s take — the card must show clock-style length.
-    #[test]
-    fn duration_formats_as_clock() {
-        assert_eq!(fmt_duration(1_250.0), "0:01");
-        assert_eq!(fmt_duration(5_000.0), "0:05");
-        assert_eq!(fmt_duration(90_000.0), "1:30");
-        assert_eq!(fmt_duration(3_725_000.0), "1:02:05");
-        assert_eq!(fmt_duration(0.0), "0:00");
-    }
+    use super::state_label;
 
     /// The dotted contract spells the live state "capturing" — it must render
     /// "Запись", not fall through to the green "Готов" badge mid-capture.
