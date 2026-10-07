@@ -15,8 +15,9 @@
   потоке; `hotkey.rs` — хоткей; `pill.rs`, `pill_wave.rs`, `status_window.rs`,
   `settings.rs`, `queue.rs`, `view.rs` — UI.
 - `gpui/windows/`, `gpui/build.rs` — иконка и VERSIONINFO.
-- `scripts/release.py`, `publish-version.sh`, `test_release.py` — версии,
-  упаковка и публикация релизов.
+- `scripts/release.mjs`, `publish-version.mjs`, `test_release.mjs` — версии,
+  упаковка и публикация релизов. `scripts/make_icon.py` — единственный
+  Python-скрипт (нужен Pillow, только для разработки иконки, в CI нет).
 
 ## Границы
 
@@ -43,19 +44,20 @@ cortex. Системные пакеты для Linux перечислены в �
 
 CI (`.github/workflows/build.yml`) запускается на каждый PR и на push в `main`:
 fmt, тесты и release-сборка на Windows, Linux и macOS, clippy с
-`-D warnings` — только на Windows; плюс `python scripts/test_release.py`.
+`-D warnings` — только на Windows; плюс `node --test scripts/test_release.mjs`.
 Ночью (00:00 МСК) тот же workflow выпускает релиз, если исходники изменились
 с прошлого.
 
-Локально те же проверки гонит `hk` (`hk.pkl`):
+Локально те же проверки гонит `lefthook` (`lefthook.yml`; ставится через
+`pnpm install`, хуки подключает `prepare`):
 
 ```text
-cargo install hk --locked && hk install     # один раз на копию
-hk run pre-push                             # или hk check --all
+pnpm install                                # один раз на копию
+pnpm exec lefthook run pre-push             # или lefthook run check
 cargo fmt --manifest-path gpui/Cargo.toml -- --check
 cargo clippy --locked --manifest-path gpui/Cargo.toml --all-targets --all-features -- -D warnings
 cargo test --locked --manifest-path gpui/Cargo.toml --all-features
-python scripts/test_release.py
+node --test scripts/test_release.mjs
 ```
 
 Не обходи хуки через `--no-verify`.
@@ -63,7 +65,7 @@ python scripts/test_release.py
 ## Правила кода
 
 - Мёртвый код удаляй сразу, вместе с тестами только на него. Clippy идёт с
-  чистым `-D warnings`: не добавляй `-A …` в `hk.pkl` и `build.yml` и
+  чистым `-D warnings`: не добавляй `-A …` в `lefthook.yml` и `build.yml` и
   `#[allow(...)]` в код, чини код.
 - `gpui` (псевдоним `gpui-kit`) и `gpui-component` закреплены точными версиями
   и должны совпадать с cortex/manager-gpui, agenda-gpui и memoria-gpui: две
