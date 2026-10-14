@@ -10,11 +10,11 @@ gpui = { package = "gpui-kit", version = "=0.6.2" }
 gpui-component = "=0.6.2"
 # Imago GPUI shared palette/chrome. Pinned by rev; the crate lives in
 # crates/imago-gpui inside the imago repo workspace.
-imago-gpui = { git = "https://github.com/makekosmos/imago.git", rev = "c7ae7944782af5ec903c6332bfef362bb03e03b8" }
+imago-gpui = { git = "https://github.com/makekosmos/imago.git", rev = "d65cec74fdd6b0bb29a00cc602ed663ccd19f16a" }
 # Shared GPUI surface (theme/widgets/fields/engine + typed EngineError).
 # Since KOS-319 the kit lives at crates/mundus-gpui-kit inside imago — pin
 # the SAME imago rev as imago-gpui so the lockfile holds one source.
-mundus-gpui-kit = { git = "https://github.com/makekosmos/imago.git", rev = "c7ae7944782af5ec903c6332bfef362bb03e03b8" }
+mundus-gpui-kit = { git = "https://github.com/makekosmos/imago.git", rev = "d65cec74fdd6b0bb29a00cc602ed663ccd19f16a" }
 serde_json = "1.0.151"
 # Queue row titles render RFC 3339 timestamps as local «1 окт., 14:32».
 chrono = "0.4"
@@ -25,6 +25,8 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_System_Threading",
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Dwm",
+  "Win32_System_LibraryLoader",
 ] }
 
 # #[gpui::test] + TestAppContext live behind gpui's test-support feature

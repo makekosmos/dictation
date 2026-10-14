@@ -142,28 +142,137 @@ pub fn open(
         area.center().x - px(width / 2.),
         area.origin.y + area.size.height - px(height + margin),
     );
-    cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin,
-                size: size(px(width), px(height)),
-            })),
-            titlebar: None,
-            focus: false,
-            show: true,
-            kind: WindowKind::PopUp,
-            is_movable: false,
-            is_resizable: false,
-            is_minimizable: false,
-            window_background: WindowBackgroundAppearance::Transparent,
-            ..Default::default()
-        },
-        move |_, cx| {
-            cx.new(|cx| DictationPill::new(manager, style, PillPhase::Starting, hotkey, cx))
-        },
-    )
-    .ok()
+    let handle = cx
+        .open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds {
+                    origin,
+                    size: size(px(width), px(height)),
+                })),
+                titlebar: None,
+                focus: false,
+                show: true,
+                kind: WindowKind::PopUp,
+                is_movable: false,
+                is_resizable: false,
+                is_minimizable: false,
+                window_background: WindowBackgroundAppearance::Transparent,
+                ..Default::default()
+            },
+            move |_, cx| {
+                cx.new(|cx| DictationPill::new(manager, style, PillPhase::Starting, hotkey, cx))
+            },
+        )
+        .ok()?;
+    strip_dwm_frame(&handle, cx);
+    Some(handle)
 }
+
+/// Win11 DWM decorates even a transparent borderless PopUp with a 1px frame,
+/// corner rounding AND a shape-hugging drop shadow — plus gpui's
+/// `WindowBackgroundAppearance::Transparent` sets ACCENT state 2
+/// (ENABLE_TRANSPARENTGRADIENT), which paints a faint tint over a wide
+/// rectangle. Measured fix (each verified on a live pill HWND over a flat
+/// background): border COLOR_NONE + DONOTROUND for the frame, ACCENT_DISABLED
+/// for the tint, and DWMWA_NCREDERING_POLICY = DWMNCRP_DISABLED for the
+/// shadow ring. Together they leave only the rounded pill silhouette.
+#[cfg(windows)]
+fn strip_dwm_frame(handle: &WindowHandle<DictationPill>, cx: &mut App) {
+    let _ = handle.update(cx, |_, window, _| {
+        use raw_window_handle::RawWindowHandle;
+        if let Ok(wh) = raw_window_handle::HasWindowHandle::window_handle(window) {
+            if let RawWindowHandle::Win32(w32) = wh.as_raw() {
+                let hwnd = w32.hwnd.get() as _;
+                unsafe {
+                    use windows_sys::Win32::Graphics::Dwm::{
+                        DwmSetWindowAttribute, DWMNCRP_DISABLED, DWMWA_BORDER_COLOR,
+                        DWMWA_COLOR_NONE, DWMWA_NCRENDERING_POLICY, DWMWA_WINDOW_CORNER_PREFERENCE,
+                        DWMWCP_DONOTROUND,
+                    };
+                    let border = DWMWA_COLOR_NONE;
+                    DwmSetWindowAttribute(
+                        hwnd,
+                        DWMWA_BORDER_COLOR as u32,
+                        &border as *const _ as _,
+                        4,
+                    );
+                    let corner = DWMWCP_DONOTROUND;
+                    DwmSetWindowAttribute(
+                        hwnd,
+                        DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+                        &corner as *const _ as _,
+                        4,
+                    );
+                    // Kills the DWM drop shadow that hugs the pill
+                    // silhouette and shows through the transparent margin.
+                    let ncrp = DWMNCRP_DISABLED;
+                    DwmSetWindowAttribute(
+                        hwnd,
+                        DWMWA_NCRENDERING_POLICY as u32,
+                        &ncrp as *const _ as _,
+                        4,
+                    );
+                    clear_accent_backdrop(hwnd);
+                }
+            }
+        }
+    });
+}
+
+/// ACCENT_DISABLED via the undocumented user32 SetWindowCompositionAttribute
+/// — same struct layout gpui-pre-windows uses (window.rs), only state 0
+/// instead of 2.
+#[cfg(windows)]
+unsafe fn clear_accent_backdrop(hwnd: *mut core::ffi::c_void) {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
+
+    #[repr(C)]
+    struct AccentPolicy {
+        accent_state: u32,
+        accent_flags: u32,
+        gradient_color: u32,
+        animation_id: u32,
+    }
+    #[repr(C)]
+    struct WindowCompositionAttribData {
+        attrib: u32,
+        pv_data: *mut core::ffi::c_void,
+        cb_data: usize,
+    }
+    type SetWindowCompositionAttributeFn =
+        unsafe extern "system" fn(HWND, *mut WindowCompositionAttribData) -> i32;
+
+    let user32 = unsafe { GetModuleHandleA(c"user32.dll".as_ptr() as *const u8) };
+    if user32.is_null() {
+        return;
+    }
+    let Some(raw) = (unsafe {
+        GetProcAddress(
+            user32,
+            c"SetWindowCompositionAttribute".as_ptr() as *const u8,
+        )
+    }) else {
+        return;
+    };
+    let set: SetWindowCompositionAttributeFn = unsafe { std::mem::transmute(raw) };
+    let accent = AccentPolicy {
+        accent_state: 0, // ACCENT_DISABLED
+        accent_flags: 0,
+        gradient_color: 0,
+        animation_id: 0,
+    };
+    let mut data = WindowCompositionAttribData {
+        attrib: 0x13, // WCA_ACCENT_POLICY
+        pv_data: &accent as *const _ as *mut _,
+        cb_data: std::mem::size_of::<AccentPolicy>(),
+    };
+    let _ = set(hwnd as HWND, &mut data as *mut _);
+}
+
+/// Non-Windows platforms draw no frame around a `WindowKind::PopUp`.
+#[cfg(not(windows))]
+fn strip_dwm_frame(_handle: &WindowHandle<DictationPill>, _cx: &mut App) {}
 
 pub struct DictationPill {
     /// Click handlers only — the window is opened from inside a

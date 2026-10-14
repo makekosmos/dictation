@@ -1,5 +1,6 @@
 use super::{Command, DictationApp, Worker};
 use crate::hotkey::{build_accelerator, vk_to_key_name};
+use crate::pill::{DictationPill, PillStyle};
 use crate::session::{level_to_visual, should_adopt_capture, smooth_level, state_broadcast_ended};
 use crate::worker::Reply;
 use gpui::{AppContext, Entity, TestAppContext};
@@ -630,4 +631,147 @@ fn use_local_model_sends_model_id(cx: &mut TestAppContext) {
         "dictation.use_local_model",
         json!({ "modelId": "parakeet-ultra" }),
     );
+}
+
+/// Stale-while-revalidate: a slot holding Ready data keeps it while a
+/// re-issued read is in flight — `dictation_state_changed` broadcasts and
+/// post-action `refresh()` re-send the feed ops constantly; resetting the
+/// slot to Loading repaints the status window on "Загрузка…" and drops
+/// config readers (pill style, hotkey) onto defaults mid-session.
+#[gpui::test]
+fn reload_keeps_ready_slot_and_pill_style(cx: &mut TestAppContext) {
+    let (app, rx, replies, _events) = test_app(cx);
+    replies
+        .send(Reply {
+            slot: "dictation.state".into(),
+            result: Ok(json!({ "config": { "pillStyle": "compact" } })),
+        })
+        .unwrap();
+    cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
+
+    // A state-changed broadcast re-issues the read while Ready data exists.
+    cx.update(|cx| {
+        app.update(cx, |this, cx| {
+            this.handle_engine_event(
+                json!({ "event": "dictation_state_changed", "state": "idle" }),
+                cx,
+            )
+        })
+    });
+    expect_rpc(&rx, "dictation.get_state", json!({}));
+    cx.update(|cx| {
+        app.update(cx, |this, _| {
+            assert!(
+                matches!(
+                    this.slots.get("dictation.state"),
+                    Some(crate::app::Slot::Ready(_))
+                ),
+                "re-issued read reset a Ready slot to Loading"
+            );
+            assert_eq!(this.dictation_pill_style(), PillStyle::Compact);
+        })
+    });
+
+    // refresh() re-sends every feed — the Ready slot still serves its data.
+    cx.update(|cx| app.update(cx, |this, cx| this.refresh(cx)));
+    expect_rpc(&rx, "dictation.get_state", json!({}));
+    cx.update(|cx| {
+        app.update(cx, |this, _| {
+            assert_eq!(
+                this.data("dictation.state")["config"]["pillStyle"],
+                json!("compact")
+            );
+            assert_eq!(this.dictation_pill_style(), PillStyle::Compact);
+        })
+    });
+}
+
+/// A Ready slot whose re-sent op fails on a dead worker still drops to
+/// Failed — the dead-connection banner must outrank stale data.
+#[gpui::test]
+fn reload_over_dead_worker_fails_the_ready_slot(cx: &mut TestAppContext) {
+    let (app, rx, replies, _events) = test_app(cx);
+    replies
+        .send(Reply {
+            slot: "dictation.stats".into(),
+            result: Ok(json!({ "total": 3 })),
+        })
+        .unwrap();
+    cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
+    drop(rx);
+    cx.update(|cx| {
+        app.update(cx, |this, _| {
+            this.load(crate::app::Feed::Stats);
+        })
+    });
+    cx.update(|cx| {
+        app.update(cx, |this, _| {
+            assert!(
+                matches!(
+                    this.slots.get("dictation.stats"),
+                    Some(crate::app::Slot::Failed(_))
+                ),
+                "dead worker left a stale Ready slot"
+            );
+        })
+    });
+}
+
+/// Counts live DictationPill windows — the sweep invariant is about real
+/// windows, not just the tracked handle.
+fn pill_window_count(cx: &TestAppContext) -> usize {
+    cx.update(|cx| {
+        cx.windows()
+            .iter()
+            .filter(|w| w.downcast::<DictationPill>().is_some())
+            .count()
+    })
+}
+
+/// `end_pill_session` must really destroy the pill window: a direct
+/// `handle.update` can fail while the window sits on the update stack
+/// (a pill button re-entered the app), which previously orphaned the HWND
+/// forever — the deferred close + drain-time sweep leave no window behind.
+#[gpui::test]
+fn end_pill_session_leaves_no_pill_window(cx: &mut TestAppContext) {
+    let (app, rx, _replies, _events) = test_app(cx);
+    cx.update(|cx| app.update(cx, |this, cx| this.dictation_toggle(cx)));
+    assert_eq!(pill_window_count(cx), 1, "session opened no pill");
+    rx.try_recv().ok();
+
+    cx.update(|cx| app.update(cx, |this, cx| this.end_pill_session(cx)));
+    cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
+    assert_eq!(pill_window_count(cx), 0, "pill window survived session end");
+    assert!(cx.update(|cx| app.read(cx).pill.is_none()));
+}
+
+/// The drain-time sweep removes any DictationPill window that isn't the
+/// tracked `self.pill` — a second HWND orphaned by a raced close — while
+/// leaving the live session's own pill alone.
+#[gpui::test]
+fn sweep_removes_stray_pill_but_keeps_tracked(cx: &mut TestAppContext) {
+    let (app, _rx, _replies, _events) = test_app(cx);
+    // Idle: a pill window the app never tracked is an orphan — sweep it.
+    cx.update(|cx| {
+        app.update(cx, |_, cx| {
+            crate::pill::open(cx.entity(), PillStyle::Large, "Ctrl+Shift+;".into(), cx);
+        })
+    });
+    assert_eq!(pill_window_count(cx), 1);
+    cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
+    assert_eq!(pill_window_count(cx), 0, "idle pill window was not swept");
+
+    // Recording session: the tracked pill survives drain ticks, a second
+    // stray HWND does not.
+    cx.update(|cx| app.update(cx, |this, cx| this.dictation_toggle(cx)));
+    let tracked = cx.update(|cx| app.read(cx).pill.expect("session pill"));
+    cx.update(|cx| {
+        app.update(cx, |_, cx| {
+            crate::pill::open(cx.entity(), PillStyle::Compact, "".into(), cx);
+        })
+    });
+    assert_eq!(pill_window_count(cx), 2);
+    cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
+    assert_eq!(pill_window_count(cx), 1, "sweep touched the tracked pill");
+    assert_eq!(cx.update(|cx| app.read(cx).pill), Some(tracked));
 }

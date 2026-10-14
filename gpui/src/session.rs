@@ -6,7 +6,7 @@ use ::gpui::prelude::*;
 use serde_json::{json, Value};
 
 use crate::app::{DictationApp, Feed, Slot, ENGINE_GONE};
-use crate::pill::{PillDelivery, PillPhase, PillStyle};
+use crate::pill::{DictationPill, PillDelivery, PillPhase, PillStyle};
 use crate::worker::Command;
 
 impl DictationApp {
@@ -131,9 +131,16 @@ impl DictationApp {
 
     pub(crate) fn close_pill(&mut self, cx: &mut Context<Self>) {
         if let Some(handle) = self.pill.take() {
-            handle
-                .update(cx, |_, window, _| window.remove_window())
-                .ok();
+            // The pill's own buttons reach here re-entrantly while that
+            // window sits on the update stack — a direct `handle.update`
+            // fails then and the HWND would stay alive as an orphan the
+            // app no longer tracks. Defer so the removal runs after the
+            // window leaves the stack.
+            cx.defer(move |cx| {
+                handle
+                    .update(cx, |_, window, _| window.remove_window())
+                    .ok();
+            });
         }
     }
 
@@ -146,7 +153,7 @@ impl DictationApp {
             .unwrap_or_else(|| "Ctrl+Shift+;".into())
     }
 
-    fn dictation_pill_style(&self) -> PillStyle {
+    pub(crate) fn dictation_pill_style(&self) -> PillStyle {
         match self
             .data(Feed::State.slot())
             .get("config")
@@ -161,9 +168,12 @@ impl DictationApp {
     /// Push the session snapshot into the pill entity. The pill renders ONLY
     /// its own fields — `cx.open_window` draws synchronously, and that first
     /// draw would re-enter the `DictationApp` update that opened it. A failed
-    /// update means the window died behind our back (compositor/session
-    /// teardown) — drop the stale handle or every later session reuses it
-    /// and runs with no overlay at all.
+    /// update has two shapes: the window died behind our back
+    /// (compositor/session teardown) — drop the stale handle or every later
+    /// session reuses it and runs with no overlay at all — or it is merely
+    /// on the update stack right now (a pill button re-entered the app),
+    /// which is transient: keep the handle and retry the push next tick
+    /// instead of orphaning a live window.
     pub(crate) fn push_pill(&mut self, cx: &mut Context<Self>) {
         // Dropping the stale handle below (or a failed open at session
         // start) leaves `self.pill` empty — without this reopen the CURRENT
@@ -191,6 +201,39 @@ impl DictationApp {
             None => false,
         };
         if stale {
+            // The window stays in `cx.windows()` while it is on the update
+            // stack; only a truly destroyed window drops off the list.
+            let alive = self.pill.is_some_and(|handle| {
+                cx.windows()
+                    .iter()
+                    .any(|w| w.window_id() == handle.window_id())
+            });
+            if !alive {
+                self.pill = None;
+            }
+        }
+        self.sweep_pills(cx);
+    }
+
+    /// Drain-tick invariant: at most one `DictationPill` window exists, and
+    /// only while a session runs (`phase.is_some()`). A removal that raced a
+    /// re-entrant update leaves the HWND alive but untracked — deferred
+    /// removal (so the sweep never runs inside that window's own update)
+    /// clears every pill window that isn't `self.pill`, and `self.pill` too
+    /// once no session is running.
+    fn sweep_pills(&mut self, cx: &mut Context<Self>) {
+        for any in cx.windows() {
+            let Some(pill) = any.downcast::<DictationPill>() else {
+                continue;
+            };
+            if self.phase.is_some() && self.pill.is_some_and(|h| h == pill) {
+                continue; // the live session's own overlay — leave it be
+            }
+            cx.defer(move |cx| {
+                pill.update(cx, |_, window, _| window.remove_window()).ok();
+            });
+        }
+        if self.phase.is_none() {
             self.pill = None;
         }
     }
