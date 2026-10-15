@@ -3374,7 +3374,7 @@ checksum = "09e54e57b4c48b40f7aec75635392b12b3421fa26fe8b4332e63138ed278459c"
 [[package]]
 name = "imago-gpui"
 version = "0.1.0"
-source = "git+https://github.com/makekosmos/imago.git?rev=c7ae7944782af5ec903c6332bfef362bb03e03b8#c7ae7944782af5ec903c6332bfef362bb03e03b8"
+source = "git+https://github.com/makekosmos/imago.git?rev=d65cec74fdd6b0bb29a00cc602ed663ccd19f16a#d65cec74fdd6b0bb29a00cc602ed663ccd19f16a"
 dependencies = [
  "gpui-base",
  "gpui-component",
@@ -4059,7 +4059,7 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 [[package]]
 name = "mundus-gpui-kit"
 version = "0.2.0"
-source = "git+https://github.com/makekosmos/imago.git?rev=c7ae7944782af5ec903c6332bfef362bb03e03b8#c7ae7944782af5ec903c6332bfef362bb03e03b8"
+source = "git+https://github.com/makekosmos/imago.git?rev=d65cec74fdd6b0bb29a00cc602ed663ccd19f16a#d65cec74fdd6b0bb29a00cc602ed663ccd19f16a"
 dependencies = [
  "gpui-component",
  "gpui-kit",

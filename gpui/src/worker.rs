@@ -148,9 +148,14 @@ fn dictation_transcribe(
         ));
     }
     let _ = engine.rpc("dictation.capture_foreground_window", json!({}));
-    engine.rpc(
+    // Transcribe + inject of a long recording legitimately outlasts the
+    // default 15s — a transport timeout there surfaces as «Не доставлено»
+    // while the Engine actually finishes and pastes. 180s covers local
+    // models on slow machines.
+    engine.rpc_with_timeout(
         "dictation.speech.transcribe",
         json!({ "audioB64": audio_b64, "durationSec": duration_sec }),
+        std::time::Duration::from_secs(180),
     )
 }
 

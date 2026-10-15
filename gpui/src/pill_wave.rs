@@ -177,40 +177,99 @@ pub fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: u32, time: f32, wi
     }
 }
 
+/// Compact-pill bar geometry in logical px, snapped so every bar covers an
+/// integer number of device pixels starting on an integer edge — at
+/// fractional scales (1.25 → 4.375px-wide bars) unsnapped bars antialias
+/// into visibly different widths. Returns (bar x, bar width) in logical px.
+fn compact_bar_span(
+    index: usize,
+    count: usize,
+    origin_x: f32,
+    content_w: f32,
+    scale: f32,
+) -> (f32, f32) {
+    const BAR_W: f32 = 3.5;
+    const GAP: f32 = 3.;
+    let scale = scale.max(0.01);
+    let bar_w_dev = (BAR_W * scale).round().max(1.0);
+    let gap_dev = (GAP * scale).round().max(0.0);
+    let total_dev = count as f32 * bar_w_dev + count.saturating_sub(1) as f32 * gap_dev;
+    let start_dev = (origin_x * scale + (content_w * scale - total_dev) / 2.0).round();
+    let x_dev = start_dev + index as f32 * (bar_w_dev + gap_dev);
+    (x_dev / scale, bar_w_dev / scale)
+}
+
 /// Compact pill bars — caller passes the final per-bar heights (0..1):
 /// `live_bars` while recording, `converge_bars` while processing.
 pub fn paint_compact_wave(bounds: Bounds<Pixels>, bars: &[f32], color: u32, window: &mut Window) {
-    const BAR_W: f32 = 3.5;
-    const GAP: f32 = 3.;
     let w = f32::from(bounds.size.width);
     let h = f32::from(bounds.size.height);
     if w <= 0.0 || h <= 0.0 || bars.is_empty() {
         return;
     }
     let count = bars.len();
-    let total = count as f32 * BAR_W + (count.saturating_sub(1)) as f32 * GAP;
-    let start_x = bounds.origin.x + px((w - total) / 2.);
+    let scale = window.scale_factor();
+    let origin_x = f32::from(bounds.origin.x);
     let center_y = bounds.origin.y + px(h / 2.);
     for (i, value) in bars.iter().enumerate() {
         // dB mapping in session.rs already compresses loudness — linear here.
         let bar_h = (value.clamp(0.0, 1.0) * h).max(2.).min(h);
-        let x = start_x + px(i as f32 * (BAR_W + GAP));
+        let (x, bar_w) = compact_bar_span(i, count, origin_x, w, scale);
         window.paint_quad(
             fill(
                 Bounds::from_corners(
-                    point(x, center_y - px(bar_h / 2.)),
-                    point(x + px(BAR_W), center_y + px(bar_h / 2.)),
+                    point(px(x), center_y - px(bar_h / 2.)),
+                    point(px(x + bar_w), center_y + px(bar_h / 2.)),
                 ),
                 rgb(color),
             )
-            .corner_radii(px((BAR_W / 2.).min(bar_h / 2.))),
+            .corner_radii(px((bar_w / 2.).min(bar_h / 2.))),
         );
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{converge_bars, live_bars, CONVERGE_PERIOD};
+    use super::{compact_bar_span, converge_bars, live_bars, CONVERGE_PERIOD};
+
+    /// Device-pixel snapping: at every scale all bars land on integer device
+    /// edges with identical device width — the fix for 1.25-scale bars
+    /// antialiasing to visibly different widths.
+    #[test]
+    fn compact_bars_snap_to_device_pixels() {
+        for scale in [1.0_f32, 1.25, 1.5, 2.0] {
+            let count = 6;
+            let mut edges_dev = Vec::new();
+            for i in 0..count {
+                let (x, w) = compact_bar_span(i, count, 10.0, 44.0, scale);
+                let x_dev = x * scale;
+                let w_dev = w * scale;
+                assert!(
+                    (x_dev - x_dev.round()).abs() < 1e-3,
+                    "bar {i} left edge {x_dev} not on a device pixel (scale {scale})"
+                );
+                assert!(
+                    (w_dev - w_dev.round()).abs() < 1e-3,
+                    "bar {i} width {w_dev} not an integer device px (scale {scale})"
+                );
+                edges_dev.push((x_dev, w_dev));
+            }
+            let first_w = edges_dev[0].1;
+            assert!(
+                edges_dev.iter().all(|(_, w)| *w == first_w),
+                "scale {scale}: unequal bar widths {edges_dev:?}"
+            );
+            // Gaps are equal too — the row stays evenly spaced.
+            let gaps: Vec<f32> = edges_dev
+                .windows(2)
+                .map(|ab| ab[1].0 - (ab[0].0 + ab[0].1))
+                .collect();
+            assert!(
+                gaps.iter().all(|g| *g == gaps[0]),
+                "scale {scale}: unequal gaps {gaps:?}"
+            );
+        }
+    }
 
     #[test]
     fn live_bars_center_weighted() {

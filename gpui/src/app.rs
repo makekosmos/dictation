@@ -277,11 +277,19 @@ impl DictationApp {
         }
     }
 
-    /// Mark `slot` Loading and queue its RPC. A dead worker can never
-    /// produce a reply, so the slot goes straight to Failed instead of
-    /// painting "Загрузка…" next to the dead-connection banner forever.
+    /// Queue `slot`'s RPC and mark it Loading — stale-while-revalidate: a
+    /// slot that already holds Ready data keeps it until the reply lands.
+    /// (Broadcasts and post-action refreshes re-send these ops constantly;
+    /// dropping to Loading each time repaints the window on
+    /// "Загрузка…"/defaults — visible as a reload — and makes readers like
+    /// `dictation_pill_style` fall back to defaults mid-session.) A dead
+    /// worker can never produce a reply, so the slot goes straight to
+    /// Failed instead of painting "Загрузка…" next to the dead-connection
+    /// banner forever.
     fn send_rpc(&mut self, slot: String, op: &'static str, params: Value) -> bool {
-        self.slots.insert(slot.clone(), Slot::Loading);
+        if !matches!(self.slots.get(&slot), Some(Slot::Ready(_))) {
+            self.slots.insert(slot.clone(), Slot::Loading);
+        }
         let sent = self.send_command(Command::Rpc {
             slot: slot.clone(),
             op,
