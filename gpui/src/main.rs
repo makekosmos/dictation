@@ -7,13 +7,16 @@
 mod app;
 mod assets;
 mod button;
+mod dot_scope;
+mod gpu_scope;
 mod hotkey;
 mod languages;
 mod pill;
-mod pill_wave;
 mod queue;
 mod session;
 mod settings;
+mod sounds;
+mod spring;
 mod status_window;
 mod theme;
 mod view;

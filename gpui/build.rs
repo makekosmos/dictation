@@ -1,7 +1,11 @@
-//! Embed the Windows application icon (windows/app.rc → windows/app.ico).
-//! MSVC host/target: rc.exe via embed-resource (locates the Windows SDK
-//! itself). GNU (cross or native mingw): windres → COFF .o → rustc link-arg.
-//! Mirrors agenda-gpui/build.rs, minus the manifest (none shipped here).
+//! Embed the Windows application icon and manifest (windows/app.rc →
+//! windows/app.ico + windows/app.manifest). MSVC host/target: rc.exe via
+//! embed-resource (locates the Windows SDK itself). GNU (cross or native
+//! mingw): windres → COFF .o → rustc link-arg.
+//!
+//! The manifest is ours because gpui-base enables gpui-fast's
+//! `windows-manifest-provided-by-host`: the host app must supply Common
+//! Controls v6 and PerMonitorV2 DPI awareness itself.
 
 use std::env;
 use std::path::PathBuf;
@@ -21,10 +25,14 @@ fn main() {
         "cargo:rerun-if-changed={}",
         windows_dir.join("app.ico").display()
     );
+    println!(
+        "cargo:rerun-if-changed={}",
+        windows_dir.join("app.manifest").display()
+    );
 
     #[cfg(target_os = "windows")]
     if target.ends_with("-msvc") {
-        // Icon-only .rc — no manifest to require, but Failed must panic.
+        // The .rc carries the manifest; Failed must still panic.
         embed_resource::compile(&rc, embed_resource::NONE)
             .manifest_optional()
             .unwrap();

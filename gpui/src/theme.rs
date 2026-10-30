@@ -3,7 +3,7 @@
 //! global flag: this app IS part of Mundus.
 use ::gpui::*;
 use imago_gpui::theme::*;
-use mundus_gpui_kit::fields::{vnum, vopt, vstr};
+use mundus_gpui_kit::fields::{vnum, vstr};
 use serde_json::Value;
 
 /// Engine `appearance.settings` (schema v1) — только то, что диктовке нужно.
@@ -12,8 +12,6 @@ pub(crate) struct AppearanceSettings {
     pub mode: String,        // "system" | "light" | "dark"
     pub light_theme: String, // palette key
     pub dark_theme: String,
-    pub accent_source: String, // "theme" | "custom" | "wallpaper"
-    pub accent_color: Option<String>,
     pub font_family: String,
     pub font_size: f32,
 }
@@ -24,8 +22,6 @@ impl Default for AppearanceSettings {
             mode: "dark".into(),
             light_theme: "default".into(),
             dark_theme: "default".into(),
-            accent_source: "theme".into(),
-            accent_color: None,
             font_family: "Inter".into(),
             font_size: 13.,
         }
@@ -40,11 +36,6 @@ pub(crate) struct Resolved {
     pub font_family: String,
     pub font_size: f32,
     pub mode: String,
-}
-
-fn parse_color(value: &str) -> Option<u32> {
-    let hex = value.trim().trim_start_matches('#');
-    u32::from_str_radix(hex, 16).ok().filter(|_| hex.len() == 6)
 }
 
 impl AppearanceSettings {
@@ -63,14 +54,10 @@ impl AppearanceSettings {
             .iter()
             .position(|theme| theme.key == key)
             .unwrap_or(0);
-        let accent = match self.accent_source.as_str() {
-            "custom" => self.accent_color.as_deref().and_then(parse_color),
-            _ => None,
-        };
         Resolved {
             dark,
             theme_index,
-            accent,
+            accent: Some(0xD3D3D3),
             font_family: self.font_family.clone(),
             font_size: self.font_size,
             mode: self.mode.clone(),
@@ -119,8 +106,6 @@ pub(crate) fn sync_theme(settings_json: &Value, window: &Window, cx: &mut App) -
         mode: vstr(cfg, "mode"),
         light_theme: vstr(cfg, "light_theme"),
         dark_theme: vstr(cfg, "dark_theme"),
-        accent_source: vstr(cfg, "accent_source"),
-        accent_color: vopt(cfg, "accent_color"),
         font_family: vstr(cfg, "font_family"),
         font_size: vnum(cfg, "font_size") as f32,
     };
