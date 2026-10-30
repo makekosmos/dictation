@@ -10,7 +10,9 @@ pub use imago_gpui::button::ButtonKind;
 pub const LABEL_SIZE: f32 = 12.5;
 pub const LABEL_LINE_HEIGHT: f32 = 16.0;
 
-#[derive(IntoElement)]
+// gpui 0.8 re-exports the `IntoElement` derive from both `gpui::*` and the
+// prelude, so the derive must be named explicitly.
+#[derive(::gpui::IntoElement)]
 pub struct Button {
     inner: ComponentButton,
     label: Option<SharedString>,

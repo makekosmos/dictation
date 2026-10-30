@@ -6,7 +6,7 @@ use ::gpui::prelude::*;
 use serde_json::{json, Value};
 
 use crate::app::{DictationApp, Feed, Slot, ENGINE_GONE};
-use crate::pill::{DictationPill, PillDelivery, PillPhase, PillStyle};
+use crate::pill::{DictationPill, PillDelivery, PillPhase};
 use crate::worker::Command;
 
 impl DictationApp {
@@ -50,6 +50,7 @@ impl DictationApp {
     /// записи…"), then ask the Engine to capture the foreground HWND and start
     /// WASAPI capture.
     fn dictation_begin(&mut self, cx: &mut Context<Self>) {
+        crate::sounds::start();
         self.session += 1;
         self.delivery = None;
         self.finish_after_start = false;
@@ -58,12 +59,7 @@ impl DictationApp {
         // remap every bar slot as the buffer grows ("bars squeeze in").
         self.levels = vec![0.0; 120].into();
         if self.pill.is_none() {
-            self.pill = crate::pill::open(
-                cx.entity(),
-                self.dictation_pill_style(),
-                self.dictation_hotkey(),
-                cx,
-            );
+            self.pill = crate::pill::open(cx, self.gpu_scope.clone());
         }
         if !matches!(self.slots.get(Feed::State.slot()), Some(Slot::Ready(_))) {
             self.load(Feed::State);
@@ -96,6 +92,7 @@ impl DictationApp {
     /// waveform (Vue pill parity — its no-activate PopUp never takes focus,
     /// so the target app keeps foreground for the auto_paste re-capture).
     pub(crate) fn dictation_finish(&mut self, cx: &mut Context<Self>) {
+        crate::sounds::stop();
         self.phase = Some(PillPhase::Processing);
         self.push_pill(cx);
         self.capture_adopted = false;
@@ -144,27 +141,6 @@ impl DictationApp {
         }
     }
 
-    /// The pill footer renders the configured hotkey next to Отправить.
-    fn dictation_hotkey(&self) -> String {
-        self.data(Feed::State.slot())
-            .get("config")
-            .map(|c| mundus_gpui_kit::fields::vstr(c, "hotkey"))
-            .filter(|h| !h.is_empty())
-            .unwrap_or_else(|| "Ctrl+Shift+;".into())
-    }
-
-    pub(crate) fn dictation_pill_style(&self) -> PillStyle {
-        match self
-            .data(Feed::State.slot())
-            .get("config")
-            .map(|cfg| mundus_gpui_kit::fields::vstr(cfg, "pillStyle"))
-            .as_deref()
-        {
-            Some("compact") => PillStyle::Compact,
-            _ => PillStyle::Large,
-        }
-    }
-
     /// Push the session snapshot into the pill entity. The pill renders ONLY
     /// its own fields — `cx.open_window` draws synchronously, and that first
     /// draw would re-enter the `DictationApp` update that opened it. A failed
@@ -179,22 +155,16 @@ impl DictationApp {
         // start) leaves `self.pill` empty — without this reopen the CURRENT
         // session records with no overlay at all, not just the next one.
         if self.pill.is_none() && self.phase.is_some() {
-            self.pill = crate::pill::open(
-                cx.entity(),
-                self.dictation_pill_style(),
-                self.dictation_hotkey(),
-                cx,
-            );
+            self.pill = crate::pill::open(cx, self.gpu_scope.clone());
         }
         let stale = match &self.pill {
             Some(handle) => {
                 let phase = self.phase.unwrap_or(PillPhase::Starting);
                 let delivery = self.delivery;
                 let levels = self.levels.iter().copied().collect::<Vec<f32>>();
-                let hotkey = self.dictation_hotkey();
                 handle
                     .update(cx, |pill, _, cx| {
-                        pill.set_state(phase, delivery, levels, hotkey, cx)
+                        pill.set_state(phase, delivery, levels, cx)
                     })
                     .is_err()
             }
@@ -238,16 +208,17 @@ impl DictationApp {
         }
     }
 
-    /// Vue `deliveryFinishDelay` parity — the delivery outcome stays visible
-    /// long enough to read, then the overlay closes itself. The session
-    /// counter guards against a stale timer closing a NEW session's pill.
+    /// Keep the result/cancel cue briefly, then close the overlay. The session
+    /// counter prevents a stale timer from closing a newer recording.
     pub(crate) fn schedule_pill_close(&mut self, cx: &mut Context<Self>) {
         let delay = match self.delivery {
-            Some(PillDelivery::Pasted) => std::time::Duration::from_millis(80),
-            Some(PillDelivery::ClipboardOnly) => std::time::Duration::from_millis(2500),
-            Some(PillDelivery::ClipboardFallback | PillDelivery::Failed) | None => {
-                std::time::Duration::from_millis(4500)
-            }
+            Some(PillDelivery::Pasted) => std::time::Duration::from_millis(100),
+            Some(
+                PillDelivery::ClipboardOnly
+                | PillDelivery::ClipboardFallback
+                | PillDelivery::Failed,
+            )
+            | None => std::time::Duration::from_millis(600),
         };
         let session = self.session;
         cx.spawn(async move |this, cx| {
@@ -357,12 +328,7 @@ impl DictationApp {
                         self.capture = Some(capture_id);
                         self.capture_adopted = true;
                         if self.pill.is_none() {
-                            self.pill = crate::pill::open(
-                                cx.entity(),
-                                self.dictation_pill_style(),
-                                self.dictation_hotkey(),
-                                cx,
-                            );
+                            self.pill = crate::pill::open(cx, self.gpu_scope.clone());
                         }
                         self.phase = Some(PillPhase::Recording);
                     }

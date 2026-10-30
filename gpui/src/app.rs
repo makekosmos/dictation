@@ -9,6 +9,8 @@ use std::sync::mpsc::TryRecvError;
 use ::gpui::{prelude::*, *};
 use serde_json::{json, Value};
 
+use crate::dot_scope::{Scope, Tuning};
+use crate::gpu_scope::{GpuScopeRenderer, SharedGpuScope};
 use crate::pill::{DictationPill, PillDelivery, PillPhase};
 use crate::worker::{Command, Worker};
 
@@ -54,6 +56,8 @@ pub(crate) const ENGINE_GONE: &str = "Соединение с Engine завер�
 
 pub struct DictationApp {
     worker: Worker,
+    pub(crate) gpu_scope: Option<SharedGpuScope>,
+    gpu_scope_rx: Option<std::sync::mpsc::Receiver<Result<SharedGpuScope, String>>>,
     pub slots: HashMap<String, Slot>,
     /// slot → (op, params) for every `call`/`action` — lets `drain` retry
     /// slots that failed while Engine was down (they'd otherwise stay
@@ -145,7 +149,20 @@ impl DictationApp {
         // config/Kosmos). Dictation can outlive an Engine restart or start
         // before it, and the lock may sit in either dir while an install
         // moves over — a startup snapshot would pin the wrong one.
-        Self::with_worker(Worker::start(None), cx)
+        let mut this = Self::with_worker(Worker::start(None), cx);
+        let (ready, receiver) = std::sync::mpsc::sync_channel(1);
+        this.gpu_scope_rx = Some(receiver);
+        std::thread::spawn(move || {
+            // Warm WGPU before the hotkey opens a transparent overlay.
+            let result = (|| {
+                let mut renderer = GpuScopeRenderer::new()?;
+                let _ = renderer.render(&Scope::new(Tuning::default()))?;
+                Ok(std::sync::Arc::new(std::sync::Mutex::new(renderer)))
+            })()
+            .map_err(|error: anyhow::Error| format!("{error:#}"));
+            let _ = ready.send(result);
+        });
+        this
     }
 
     /// `new` with a caller-provided worker — tests pass channel ends they
@@ -153,6 +170,8 @@ impl DictationApp {
     fn with_worker(worker: Worker, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
             worker,
+            gpu_scope: None,
+            gpu_scope_rx: None,
             slots: HashMap::new(),
             ops: HashMap::new(),
             drain_ticks: 0,
@@ -282,7 +301,7 @@ impl DictationApp {
     /// (Broadcasts and post-action refreshes re-send these ops constantly;
     /// dropping to Loading each time repaints the window on
     /// "Загрузка…"/defaults — visible as a reload — and makes readers like
-    /// `dictation_pill_style` fall back to defaults mid-session.) A dead
+    /// config readers fall back to defaults mid-session.) A dead
     /// worker can never produce a reply, so the slot goes straight to
     /// Failed instead of painting "Загрузка…" next to the dead-connection
     /// banner forever.
@@ -330,6 +349,26 @@ impl DictationApp {
     // --- Worker drain --------------------------------------------------------
 
     fn drain(&mut self, cx: &mut Context<Self>) {
+        let gpu_scope_ready = self.gpu_scope_rx.as_ref().map(|rx| rx.try_recv());
+        match gpu_scope_ready {
+            Some(Ok(Ok(renderer))) => {
+                self.gpu_scope_rx = None;
+                self.gpu_scope = Some(renderer.clone());
+                if let Some(pill) = self.pill {
+                    pill.update(cx, |pill, _, cx| {
+                        pill.set_gpu_scope(renderer);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+            Some(Ok(Err(error))) => {
+                self.gpu_scope_rx = None;
+                eprintln!("dictation-gpui: HEX WGSL renderer unavailable: {error}");
+            }
+            Some(Err(TryRecvError::Disconnected)) => self.gpu_scope_rx = None,
+            Some(Err(TryRecvError::Empty)) | None => {}
+        }
         // Second-launch wake: resurface the live status window, or open a
         // fresh one when the last close destroyed it.
         if crate::SHOW_REQUESTED.swap(false, std::sync::atomic::Ordering::SeqCst) {

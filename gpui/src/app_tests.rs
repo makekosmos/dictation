@@ -1,6 +1,6 @@
 use super::{Command, DictationApp, Worker};
 use crate::hotkey::{build_accelerator, vk_to_key_name};
-use crate::pill::{DictationPill, PillStyle};
+use crate::pill::DictationPill;
 use crate::session::{level_to_visual, should_adopt_capture, smooth_level, state_broadcast_ended};
 use crate::worker::Reply;
 use gpui::{AppContext, Entity, TestAppContext};
@@ -637,14 +637,14 @@ fn use_local_model_sends_model_id(cx: &mut TestAppContext) {
 /// re-issued read is in flight — `dictation_state_changed` broadcasts and
 /// post-action `refresh()` re-send the feed ops constantly; resetting the
 /// slot to Loading repaints the status window on "Загрузка…" and drops
-/// config readers (pill style, hotkey) onto defaults mid-session.
+/// config readers onto defaults mid-session.
 #[gpui::test]
-fn reload_keeps_ready_slot_and_pill_style(cx: &mut TestAppContext) {
+fn reload_keeps_ready_slot(cx: &mut TestAppContext) {
     let (app, rx, replies, _events) = test_app(cx);
     replies
         .send(Reply {
             slot: "dictation.state".into(),
-            result: Ok(json!({ "config": { "pillStyle": "compact" } })),
+            result: Ok(json!({ "config": { "providerEnabled": true } })),
         })
         .unwrap();
     cx.update(|cx| app.update(cx, |this, cx| this.drain(cx)));
@@ -668,7 +668,6 @@ fn reload_keeps_ready_slot_and_pill_style(cx: &mut TestAppContext) {
                 ),
                 "re-issued read reset a Ready slot to Loading"
             );
-            assert_eq!(this.dictation_pill_style(), PillStyle::Compact);
         })
     });
 
@@ -678,10 +677,9 @@ fn reload_keeps_ready_slot_and_pill_style(cx: &mut TestAppContext) {
     cx.update(|cx| {
         app.update(cx, |this, _| {
             assert_eq!(
-                this.data("dictation.state")["config"]["pillStyle"],
-                json!("compact")
+                this.data("dictation.state")["config"]["providerEnabled"],
+                json!(true)
             );
-            assert_eq!(this.dictation_pill_style(), PillStyle::Compact);
         })
     });
 }
@@ -754,7 +752,7 @@ fn sweep_removes_stray_pill_but_keeps_tracked(cx: &mut TestAppContext) {
     // Idle: a pill window the app never tracked is an orphan — sweep it.
     cx.update(|cx| {
         app.update(cx, |_, cx| {
-            crate::pill::open(cx.entity(), PillStyle::Large, "Ctrl+Shift+;".into(), cx);
+            crate::pill::open(cx, None);
         })
     });
     assert_eq!(pill_window_count(cx), 1);
@@ -767,7 +765,7 @@ fn sweep_removes_stray_pill_but_keeps_tracked(cx: &mut TestAppContext) {
     let tracked = cx.update(|cx| app.read(cx).pill.expect("session pill"));
     cx.update(|cx| {
         app.update(cx, |_, cx| {
-            crate::pill::open(cx.entity(), PillStyle::Compact, "".into(), cx);
+            crate::pill::open(cx, None);
         })
     });
     assert_eq!(pill_window_count(cx), 2);
