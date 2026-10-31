@@ -12,6 +12,7 @@ mod gpu_scope;
 mod hotkey;
 mod languages;
 mod pill;
+mod preferences;
 mod queue;
 mod session;
 mod settings;
@@ -43,24 +44,24 @@ fn window_bounds(cx: &mut App) -> Bounds<gpui::Pixels> {
 
 /// Set when a second process launch asks the running instance to resurface
 /// its status window (drain loop consumes the flag and activates it).
-pub(crate) static SHOW_REQUESTED: AtomicBool = AtomicBool::new(false);
+pub(crate) static SHOW_SETTINGS_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Single-instance guard: every process subscribes to Engine hotkey events,
 /// so a duplicate instance would spawn a second pill for each press. The
-/// mutex handle intentionally leaks for the process lifetime. A second launch
-/// signals `Local\KosmosDictationGpuiShow` so the running instance reopens
-/// its (possibly minimized) status window, then exits quietly.
-/// The mutex/event names stay `Kosmos*` across the Mundus rename — renamed
-/// names would let a legacy and a Mundus instance run side by side.
+/// mutex stays shared with legacy builds so they cannot run beside this one.
+/// Only explicit settings launches signal the current settings event; legacy
+/// background launches must not resurface the status window.
 #[cfg(windows)]
-fn claim_single_instance() -> bool {
+fn claim_single_instance(show_settings: bool) -> bool {
     use std::sync::atomic::Ordering;
     use windows_sys::Win32::{
         Foundation::{GetLastError, SetLastError, ERROR_ALREADY_EXISTS},
         System::Threading::{CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject},
     };
     let mutex_name: Vec<u16> = "Local\\KosmosDictationGpui\0".encode_utf16().collect();
-    let event_name: Vec<u16> = "Local\\KosmosDictationGpuiShow\0".encode_utf16().collect();
+    let event_name: Vec<u16> = "Local\\MundusDictationGpuiShowSettings\0"
+        .encode_utf16()
+        .collect();
     // Clear last-error first: CreateMutexW only sets it when the mutex
     // already exists, so a stale ERROR_ALREADY_EXISTS left by an earlier
     // unrelated call would wrongly exit the first instance.
@@ -74,7 +75,7 @@ fn claim_single_instance() -> bool {
     let already_exists = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
     let event = unsafe { CreateEventW(std::ptr::null(), 0, 0, event_name.as_ptr()) };
     if already_exists {
-        if !event.is_null() {
+        if show_settings && !event.is_null() {
             unsafe { SetEvent(event) };
         }
         return false;
@@ -86,7 +87,7 @@ fn claim_single_instance() -> bool {
         std::thread::spawn(move || unsafe {
             loop {
                 WaitForSingleObject(event as _, u32::MAX);
-                SHOW_REQUESTED.store(true, Ordering::SeqCst);
+                SHOW_SETTINGS_REQUESTED.store(true, Ordering::SeqCst);
             }
         });
     }
@@ -106,14 +107,14 @@ fn main() {
         }
     }));
 
-    #[cfg(windows)]
-    if !claim_single_instance() {
-        return;
-    }
     // `--background` = the Engine-managed entry point: the entity runs
     // windowless (hotkey + pill keep working); a second launch resurfaces
-    // the status window via the SHOW_REQUESTED event.
+    // the status window via the explicit settings event.
     let background = std::env::args().any(|arg| arg == "--background");
+    #[cfg(windows)]
+    if !claim_single_instance(!background) {
+        return;
+    }
     // Explicit: the pill is a transient overlay and the status window closes
     // for real — dictation keeps working with no window at all.
     gpui::application()

@@ -148,7 +148,3 @@ impl AutoLevel {
 pub fn fixed_level(loudness: f32) -> f32 {
     ((loudness + 40.0) / 30.0).clamp(0.0, 1.0)
 }
-
-pub fn loudness(rms: f32) -> f32 {
-    20.0 * (rms.max(0.0) + 1e-6).log10()
-}

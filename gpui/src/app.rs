@@ -80,7 +80,7 @@ pub struct DictationApp {
     pub pill: Option<WindowHandle<DictationPill>>,
     /// Status window handle — `None` while closed. The window is disposable:
     /// the entity (worker + Engine subscription) is held by an app global,
-    /// so closing only drops the HWND and `SHOW_REQUESTED` reopens it.
+    /// so closing only drops the HWND and an explicit settings launch reopens it.
     pub(crate) status: Option<AnyWindowHandle>,
     /// Session phase shared by the pill and the status window.
     pub phase: Option<PillPhase>,
@@ -131,6 +131,9 @@ pub struct DictationApp {
     /// changes show up.
     pub(crate) lang_select: Option<crate::languages::LangSelect>,
     pub(crate) model_select: Option<crate::settings::ModelSelect>,
+    pub(crate) preferences: crate::preferences::Preferences,
+    pub(crate) sound_volume_slider: Option<Entity<gpui_component::slider::SliderState>>,
+    auto_selecting_model: Option<String>,
 }
 
 /// Destructive Engine op the status window asks to confirm inline — cheaper
@@ -196,6 +199,9 @@ impl DictationApp {
             pending_inflight: std::collections::HashSet::new(),
             lang_select: None,
             model_select: None,
+            preferences: crate::preferences::Preferences::load(),
+            sound_volume_slider: None,
+            auto_selecting_model: None,
         };
         this.refresh(cx);
         cx.spawn(async move |this, cx| loop {
@@ -241,6 +247,18 @@ impl DictationApp {
     /// Patch the Engine's dictation config (applies live).
     pub fn update_config(&mut self, patch: Value) {
         self.action("dictation.update_config", patch);
+    }
+
+    pub(crate) fn set_sounds_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.preferences.sounds_enabled = enabled;
+        self.save_preferences();
+        cx.notify();
+    }
+
+    pub(crate) fn save_preferences(&mut self) {
+        if let Err(error) = self.preferences.save() {
+            self.error = Some(format!("Не удалось сохранить настройки звука: {error}"));
+        }
     }
 
     /// Select a downloaded local model — `dictation.use_local_model` flips
@@ -352,11 +370,12 @@ impl DictationApp {
         let gpu_scope_ready = self.gpu_scope_rx.as_ref().map(|rx| rx.try_recv());
         match gpu_scope_ready {
             Some(Ok(Ok(renderer))) => {
+                crate::pill::diagnostic("GPU renderer ready");
                 self.gpu_scope_rx = None;
                 self.gpu_scope = Some(renderer.clone());
                 if let Some(pill) = self.pill {
-                    pill.update(cx, |pill, _, cx| {
-                        pill.set_gpu_scope(renderer);
+                    pill.update(cx, |pill, window, cx| {
+                        pill.set_gpu_scope(renderer, window);
                         cx.notify();
                     })
                     .ok();
@@ -365,13 +384,17 @@ impl DictationApp {
             Some(Ok(Err(error))) => {
                 self.gpu_scope_rx = None;
                 eprintln!("dictation-gpui: HEX WGSL renderer unavailable: {error}");
+                crate::pill::diagnostic(&format!("GPU renderer unavailable: {error}"));
             }
-            Some(Err(TryRecvError::Disconnected)) => self.gpu_scope_rx = None,
+            Some(Err(TryRecvError::Disconnected)) => {
+                self.gpu_scope_rx = None;
+                crate::pill::diagnostic("GPU renderer initialization task disconnected");
+            }
             Some(Err(TryRecvError::Empty)) | None => {}
         }
         // Second-launch wake: resurface the live status window, or open a
         // fresh one when the last close destroyed it.
-        if crate::SHOW_REQUESTED.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        if crate::SHOW_SETTINGS_REQUESTED.swap(false, std::sync::atomic::Ordering::SeqCst) {
             let resurfaced = self
                 .status
                 .and_then(|h| {
@@ -582,12 +605,14 @@ impl DictationApp {
                     // stale error sits next to "Выполнено." forever.
                     self.error = None;
                     self.notice = Some("Выполнено.".into());
+                    self.auto_selecting_model = None;
                     self.refresh(cx);
                 }
                 Err(e) => {
                     // The op failed and no refresh will follow — re-enable
                     // in-flight queue rows now, or their buttons stay dead.
                     self.pending_inflight.clear();
+                    self.auto_selecting_model = None;
                     self.error = Some(e);
                 }
             },
@@ -596,6 +621,41 @@ impl DictationApp {
                     // Fresh queue snapshot — every in-flight op was answered.
                     self.pending_inflight.clear();
                 }
+                let select_model = if slot == Feed::Models.slot() {
+                    result.as_ref().ok().and_then(|data| {
+                        let models = data.get("models")?.as_array()?;
+                        if models.iter().any(|model| {
+                            model.get("selected").and_then(Value::as_bool) == Some(true)
+                        }) {
+                            return None;
+                        }
+                        let command_installed = data
+                            .get("commandInstalled")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        let available = |model: &&Value| {
+                            model.get("downloaded").and_then(Value::as_bool) == Some(true)
+                                && model.get("transcriptionSupported").and_then(Value::as_bool)
+                                    == Some(true)
+                                && (model
+                                    .get("id")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|id| id.starts_with("parakeet"))
+                                    || command_installed)
+                        };
+                        models
+                            .iter()
+                            .filter(available)
+                            .find(|model| {
+                                model.get("recommended").and_then(Value::as_bool) == Some(true)
+                            })
+                            .or_else(|| models.iter().find(available))
+                            .and_then(|model| model.get("id")?.as_str())
+                            .map(str::to_owned)
+                    })
+                } else {
+                    None
+                };
                 let slot = slot.to_string();
                 self.slots.insert(
                     slot.clone(),
@@ -604,6 +664,12 @@ impl DictationApp {
                         Err(e) => Slot::Failed(e),
                     },
                 );
+                if let Some(model_id) = select_model
+                    .filter(|id| self.auto_selecting_model.as_deref() != Some(id.as_str()))
+                {
+                    self.auto_selecting_model = Some(model_id.clone());
+                    self.use_local_model(&model_id);
+                }
                 cx.notify();
             }
         }

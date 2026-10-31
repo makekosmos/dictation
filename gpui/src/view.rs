@@ -102,6 +102,9 @@ impl Render for DictationApp {
         // --- Настройки (Engine config mirror + update_config controls) ---
         col = col.child(crate::settings::config_card(self, window, cx));
 
+        // App-owned sound preferences stay separate from Engine config.
+        col = col.child(crate::settings::sound_card(self, cx));
+
         // --- Очередь распознавания + статистика ---
         let latest_result = self.data("dictation.result");
         col = col.child(crate::queue::pending_card(self, &latest_result, cx));

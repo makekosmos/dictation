@@ -9,8 +9,8 @@ use anyhow::Context as _;
 
 use crate::dot_scope::{palette, Scope};
 
-const WIDTH: u32 = 380;
-const HEIGHT: u32 = 126;
+pub(crate) const WIDTH: u32 = 192;
+pub(crate) const HEIGHT: u32 = 96;
 const MAX_DOTS: usize = 1024;
 
 pub(crate) type SharedGpuScope = std::sync::Arc<std::sync::Mutex<GpuScopeRenderer>>;

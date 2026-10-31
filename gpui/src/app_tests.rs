@@ -1,6 +1,6 @@
 use super::{Command, DictationApp, Worker};
 use crate::hotkey::{build_accelerator, vk_to_key_name};
-use crate::pill::DictationPill;
+use crate::pill::{DictationPill, PillPhase};
 use crate::session::{level_to_visual, should_adopt_capture, smooth_level, state_broadcast_ended};
 use crate::worker::Reply;
 use gpui::{AppContext, Entity, TestAppContext};
@@ -752,7 +752,7 @@ fn sweep_removes_stray_pill_but_keeps_tracked(cx: &mut TestAppContext) {
     // Idle: a pill window the app never tracked is an orphan — sweep it.
     cx.update(|cx| {
         app.update(cx, |_, cx| {
-            crate::pill::open(cx, None);
+            crate::pill::open(cx, None, PillPhase::Starting, None, Vec::new());
         })
     });
     assert_eq!(pill_window_count(cx), 1);
@@ -765,7 +765,7 @@ fn sweep_removes_stray_pill_but_keeps_tracked(cx: &mut TestAppContext) {
     let tracked = cx.update(|cx| app.read(cx).pill.expect("session pill"));
     cx.update(|cx| {
         app.update(cx, |_, cx| {
-            crate::pill::open(cx, None);
+            crate::pill::open(cx, None, PillPhase::Starting, None, Vec::new());
         })
     });
     assert_eq!(pill_window_count(cx), 2);

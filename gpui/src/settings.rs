@@ -4,6 +4,7 @@
 use ::gpui::{prelude::*, *};
 use gpui_component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_component::select::{Select, SelectEvent, SelectState};
+use gpui_component::slider::{Slider, SliderEvent, SliderState, SliderValue};
 use gpui_component::Sizable;
 use serde_json::{json, Value};
 
@@ -54,6 +55,11 @@ fn toggle_row(
     card_row(st, first, label).child(
         imago_gpui::toggle::toggle(id, checked, cx, move |this, on, _| {
             this.update_config(patch(on))
+        })
+        .colors(imago_gpui::toggle::ToggleColors {
+            accent: 0xF79411,
+            foreground: FG(),
+            surface: CARD(),
         })
         .accessibility_label(label),
     )
@@ -115,6 +121,69 @@ pub(crate) fn config_card(
         el = el.child(kv("Последняя ошибка", err));
     }
     el.into_any_element()
+}
+
+/// Dictation UI preferences are stored by this app in its own JSON file;
+/// they do not change the Engine's speech recognition configuration.
+pub(crate) fn sound_card(app: &mut DictationApp, cx: &mut Context<DictationApp>) -> AnyElement {
+    let st = style();
+    let mut card = st.settings_card().child(
+        card_row(&st, true, "Звуки диктовки").child(
+            imago_gpui::toggle::toggle(
+                "dict-sounds-enabled",
+                app.preferences.sounds_enabled,
+                cx,
+                |this, on, cx| this.set_sounds_enabled(on, cx),
+            )
+            .colors(imago_gpui::toggle::ToggleColors {
+                accent: 0xF79411,
+                foreground: FG(),
+                surface: CARD(),
+            })
+            .accessibility_label("Звуки диктовки"),
+        ),
+    );
+
+    if app.sound_volume_slider.is_none() {
+        let volume = app.preferences.sound_volume * 100.0;
+        let slider = cx.new(|_| SliderState::new().max(100.0).default_value(volume));
+        cx.subscribe(&slider, |this, _, event: &SliderEvent, cx| {
+            let (volume, save) = match event {
+                SliderEvent::Change(SliderValue::Single(value)) => (*value / 100.0, false),
+                SliderEvent::Release(SliderValue::Single(value)) => (*value / 100.0, true),
+                _ => return,
+            };
+            this.preferences.sound_volume = volume.clamp(0.0, 1.0);
+            if save {
+                this.save_preferences();
+            }
+            cx.notify();
+        })
+        .detach();
+        app.sound_volume_slider = Some(slider);
+    }
+
+    let volume = (app.preferences.sound_volume * 100.0).round() as u8;
+    card = card.child(
+        card_row(&st, false, "Громкость").child(
+            div()
+                .w(px(180.))
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    Slider::new(app.sound_volume_slider.as_ref().unwrap())
+                        .accessibility_label("Громкость звуков диктовки"),
+                )
+                .child(
+                    div()
+                        .w(px(34.))
+                        .text_size(px(11.))
+                        .child(format!("{volume}%")),
+                ),
+        ),
+    );
+    card.into_any_element()
 }
 
 /// «Язык» row — same searchable Select, reused inside the merged

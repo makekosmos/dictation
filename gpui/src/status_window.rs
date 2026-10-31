@@ -25,7 +25,7 @@ pub(crate) fn show_and_activate(window: &mut Window) {
 /// Open (or reopen) the status window on the existing entity. The window is
 /// disposable — the entity is held by the `StatusApp` global, so the close
 /// button really closes the HWND while the worker, Engine subscription and
-/// pill flow keep running. A second launch (`SHOW_REQUESTED`) calls this
+/// pill flow keep running. An explicit settings launch calls this
 /// again for a fresh window.
 pub(crate) fn open_status_window(app: &Entity<DictationApp>, cx: &mut App) {
     let app = app.clone();
@@ -48,7 +48,7 @@ pub(crate) fn open_status_window(app: &Entity<DictationApp>, cx: &mut App) {
         },
         move |window, cx| {
             // Mark the handle dead the moment close is requested — the drain
-            // loop then treats `SHOW_REQUESTED` as "reopen", not "resurface".
+            // loop treats the next explicit settings request as a fresh open.
             window.on_window_should_close(cx, move |_, cx| {
                 let _ = weak.update(cx, |this, cx| {
                     this.status = None;
