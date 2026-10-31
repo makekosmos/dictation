@@ -10,21 +10,14 @@ use crate::pill::{DictationPill, PillDelivery, PillPhase};
 use crate::worker::Command;
 
 impl DictationApp {
-    /// Pill toggle — the status-window button, the pill's own Стоп button and
-    /// the Engine hotkey triggers all funnel here. A new session preempts a
-    /// lingering Processing/delivery pill (Vue parity: `pillFinished` hides
-    /// instantly and the hotkey always works) — stale replies are dropped by
-    /// the session tag in `handle_reply`.
+    /// The status-window button and Engine hotkey share one session machine.
+    /// Processing completes before another capture can begin.
     pub fn dictation_toggle(&mut self, cx: &mut Context<Self>) {
         match self.phase {
             None => self.dictation_begin(cx),
             Some(PillPhase::Recording) => self.dictation_finish(cx),
             Some(PillPhase::Starting) => {}
-            Some(PillPhase::Processing) => {
-                self.levels.clear();
-                self.end_pill_session(cx);
-                self.dictation_begin(cx);
-            }
+            Some(PillPhase::Processing) => {}
         }
     }
 
@@ -50,7 +43,10 @@ impl DictationApp {
     /// записи…"), then ask the Engine to capture the foreground HWND and start
     /// WASAPI capture.
     fn dictation_begin(&mut self, cx: &mut Context<Self>) {
-        crate::sounds::start();
+        crate::sounds::start(
+            self.preferences.sounds_enabled,
+            self.preferences.sound_volume,
+        );
         self.session += 1;
         self.delivery = None;
         self.finish_after_start = false;
@@ -58,9 +54,6 @@ impl DictationApp {
         // Fixed-width history from frame one: without it the first samples
         // remap every bar slot as the buffer grows ("bars squeeze in").
         self.levels = vec![0.0; 120].into();
-        if self.pill.is_none() {
-            self.pill = crate::pill::open(cx, self.gpu_scope.clone());
-        }
         if !matches!(self.slots.get(Feed::State.slot()), Some(Slot::Ready(_))) {
             self.load(Feed::State);
         }
@@ -92,7 +85,10 @@ impl DictationApp {
     /// waveform (Vue pill parity — its no-activate PopUp never takes focus,
     /// so the target app keeps foreground for the auto_paste re-capture).
     pub(crate) fn dictation_finish(&mut self, cx: &mut Context<Self>) {
-        crate::sounds::stop();
+        crate::sounds::stop(
+            self.preferences.sounds_enabled,
+            self.preferences.sound_volume,
+        );
         self.phase = Some(PillPhase::Processing);
         self.push_pill(cx);
         self.capture_adopted = false;
@@ -128,16 +124,7 @@ impl DictationApp {
 
     pub(crate) fn close_pill(&mut self, cx: &mut Context<Self>) {
         if let Some(handle) = self.pill.take() {
-            // The pill's own buttons reach here re-entrantly while that
-            // window sits on the update stack — a direct `handle.update`
-            // fails then and the HWND would stay alive as an orphan the
-            // app no longer tracks. Defer so the removal runs after the
-            // window leaves the stack.
-            cx.defer(move |cx| {
-                handle
-                    .update(cx, |_, window, _| window.remove_window())
-                    .ok();
-            });
+            crate::pill::close(handle, cx);
         }
     }
 
@@ -151,23 +138,23 @@ impl DictationApp {
     /// which is transient: keep the handle and retry the push next tick
     /// instead of orphaning a live window.
     pub(crate) fn push_pill(&mut self, cx: &mut Context<Self>) {
-        // Dropping the stale handle below (or a failed open at session
-        // start) leaves `self.pill` empty — without this reopen the CURRENT
-        // session records with no overlay at all, not just the next one.
-        if self.pill.is_none() && self.phase.is_some() {
-            self.pill = crate::pill::open(cx, self.gpu_scope.clone());
+        let Some(phase) = self.phase else {
+            self.close_pill(cx);
+            self.sweep_pills(cx);
+            return;
+        };
+        let delivery = self.delivery;
+        let levels = self.levels.iter().copied().collect::<Vec<f32>>();
+        if self.pill.is_none() {
+            self.pill =
+                crate::pill::open(cx, self.gpu_scope.clone(), phase, delivery, levels.clone());
         }
         let stale = match &self.pill {
-            Some(handle) => {
-                let phase = self.phase.unwrap_or(PillPhase::Starting);
-                let delivery = self.delivery;
-                let levels = self.levels.iter().copied().collect::<Vec<f32>>();
-                handle
-                    .update(cx, |pill, _, cx| {
-                        pill.set_state(phase, delivery, levels, cx)
-                    })
-                    .is_err()
-            }
+            Some(handle) => handle
+                .update(cx, |pill, _, cx| {
+                    pill.set_state(phase, delivery, levels, cx)
+                })
+                .is_err(),
             None => false,
         };
         if stale {
@@ -186,11 +173,8 @@ impl DictationApp {
     }
 
     /// Drain-tick invariant: at most one `DictationPill` window exists, and
-    /// only while a session runs (`phase.is_some()`). A removal that raced a
-    /// re-entrant update leaves the HWND alive but untracked — deferred
-    /// removal (so the sweep never runs inside that window's own update)
-    /// clears every pill window that isn't `self.pill`, and `self.pill` too
-    /// once no session is running.
+    /// only while a session runs (`phase.is_some()`). Orphans are hidden
+    /// immediately before their HWND is removed.
     fn sweep_pills(&mut self, cx: &mut Context<Self>) {
         for any in cx.windows() {
             let Some(pill) = any.downcast::<DictationPill>() else {
@@ -199,9 +183,7 @@ impl DictationApp {
             if self.phase.is_some() && self.pill.is_some_and(|h| h == pill) {
                 continue; // the live session's own overlay — leave it be
             }
-            cx.defer(move |cx| {
-                pill.update(cx, |_, window, _| window.remove_window()).ok();
-            });
+            crate::pill::close(pill, cx);
         }
         if self.phase.is_none() {
             self.pill = None;
@@ -297,9 +279,7 @@ impl DictationApp {
                     (false, None) => self.dictation_begin(cx),
                     (true, Some(PillPhase::Starting)) => self.finish_after_start = true,
                     (true, Some(PillPhase::Recording)) => self.dictation_finish(cx),
-                    // A fresh hold while the previous session still
-                    // transcribes preempts it, like a toggle press.
-                    (false, Some(PillPhase::Processing)) => self.dictation_toggle(cx),
+                    (false, Some(PillPhase::Processing)) => {}
                     _ => {}
                 }
             }
@@ -327,9 +307,6 @@ impl DictationApp {
                         self.levels = vec![0.0; 120].into();
                         self.capture = Some(capture_id);
                         self.capture_adopted = true;
-                        if self.pill.is_none() {
-                            self.pill = crate::pill::open(cx, self.gpu_scope.clone());
-                        }
                         self.phase = Some(PillPhase::Recording);
                     }
                 }

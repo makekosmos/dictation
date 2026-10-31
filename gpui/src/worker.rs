@@ -132,10 +132,9 @@ fn dictation_start(engine: &Engine) -> Result<Value, EngineError> {
     engine.rpc("dictation.capture.start", json!({}))
 }
 
-/// `dictation.capture.stop` clears `prev_hwnd` together with the rest of the
-/// session state, so the foreground HWND is re-captured here — the no-activate
-/// pill window never stole it and the target app owns the foreground again.
-/// `speech.transcribe` then runs the queued transcribe + inject attempt inline.
+/// Keep the foreground HWND captured before the pill opens. Re-capturing here
+/// can target a different window if focus changed while recording.
+/// `speech.transcribe` runs the queued transcribe + inject attempt inline.
 fn dictation_transcribe(
     engine: &Engine,
     audio_b64: &str,
@@ -147,7 +146,6 @@ fn dictation_transcribe(
             "capture.stop reply missing audioB64",
         ));
     }
-    let _ = engine.rpc("dictation.capture_foreground_window", json!({}));
     // Transcribe + inject of a long recording legitimately outlasts the
     // default 15s — a transport timeout there surfaces as «Не доставлено»
     // while the Engine actually finishes and pastes. 180s covers local

@@ -447,6 +447,7 @@ impl Scope {
 
     /// Starts a recording from nothing: the scanner unfolds the trace again.
     /// The auto level remembers the speaker.
+    #[cfg(test)]
     pub fn restart(&mut self, reduce_motion: bool) {
         let auto = self.auto;
         *self = Self::new(self.tuning);

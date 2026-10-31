@@ -57,7 +57,7 @@ impl AppearanceSettings {
         Resolved {
             dark,
             theme_index,
-            accent: Some(0xD3D3D3),
+            accent: Some(0xF79411),
             font_family: self.font_family.clone(),
             font_size: self.font_size,
             mode: self.mode.clone(),
