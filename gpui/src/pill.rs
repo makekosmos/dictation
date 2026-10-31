@@ -91,12 +91,12 @@ pub fn open(
                 window_background: WindowBackgroundAppearance::Transparent,
                 ..Default::default()
             },
-            move |window, cx| {
+            move |_window, cx| {
                 let hwnd = {
                     #[cfg(windows)]
                     {
-                        configure_pill_window(window, bounds);
-                        native_hwnd(window).map(|hwnd| hwnd as usize)
+                        configure_pill_window(_window, bounds);
+                        native_hwnd(_window).map(|hwnd| hwnd as usize)
                     }
                     #[cfg(not(windows))]
                     {

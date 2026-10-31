@@ -1,6 +1,6 @@
 use super::{Command, DictationApp, Worker};
 use crate::hotkey::{build_accelerator, vk_to_key_name};
-use crate::pill::DictationPill;
+use crate::pill::{DictationPill, PillPhase};
 use crate::session::{level_to_visual, should_adopt_capture, smooth_level, state_broadcast_ended};
 use crate::worker::Reply;
 use gpui::{AppContext, Entity, TestAppContext};

@@ -649,7 +649,7 @@ impl DictationApp {
                             .find(|model| {
                                 model.get("recommended").and_then(Value::as_bool) == Some(true)
                             })
-                            .or_else(|| models.iter().filter(available).next())
+                            .or_else(|| models.iter().find(available))
                             .and_then(|model| model.get("id")?.as_str())
                             .map(str::to_owned)
                     })
