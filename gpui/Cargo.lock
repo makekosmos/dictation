@@ -1303,7 +1303,7 @@ dependencies = [
 
 [[package]]
 name = "dictation-gpui"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "chrono",
